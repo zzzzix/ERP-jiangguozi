@@ -682,10 +682,17 @@ function renderDashboard(){
       todayItems.push(`<div class="today-item"><span class="desc"><span class="red">${s["归属公司"]}</span> 部分回款 待回款 ${fmtMoney((Number(s["对账金额"]||0)-Number(s["甲方回款金额"]||0)))} | 周期 ${s["对账周期"]||"-"}</span></span><button class="btn btn-sm btn-primary" onclick="switchView('settlement')">处理</button></div>`);
     }
   });
-  // Unsettled delivery batches
-  const settledBatches=new Set();
-  settlements.forEach(s=>{if(s["对应送货批次"])s["对应送货批次"].split(",").forEach(b=>b.trim()&&settledBatches.add(b.trim()))});
-  const unsettled=delivery.filter(d=>!settledBatches.has(d["单据编号"]));
+  // Unsettled delivery batches：按日期范围判断是否已结算
+  const unsettled=delivery.filter(d=>{
+    return !settlements.some(s=>{
+      if(!s["对应送货批次"] || s["归属公司"]!==d["业务归属公司"])return false;
+      if(s["对应送货批次"].includes(" 至 ")){
+        const [start,end]=s["对应送货批次"].split(" 至 ");
+        return d["送货日期"]>=start && d["送货日期"]<=end;
+      }
+      return s["对应送货批次"].split(",").map(b=>b.trim()).includes(d["单据编号"]);
+    });
+  });
   if(unsettled.length>0){
     todayItems.push(`<div class="today-item"><span class="desc">有 <span class="red">${unsettled.length}</span> 笔送货单尚未建立结算台账</span></span><button class="btn btn-sm btn-primary" onclick="switchView('settlement')">去结算</button></div>`);
   }
@@ -1305,15 +1312,23 @@ function renderSettlement(){
 function openSettlementForm(id){
   const data=loadData(KEYS.settlement);
   const r=id?data.find(x=>x.id===id):null;
-  const delivery=loadData(KEYS.delivery);
+  const today=new Date();
+  const defaultMonth=today.getFullYear()+"-"+String(today.getMonth()+1).padStart(2,"0");
+  let batchText=r?r["对应送货批次"]:"";
+  let startDate="",endDate="";
+  if(batchText && batchText.includes(" 至 ")){
+    const parts=batchText.split(" 至 ");
+    startDate=parts[0]||"";
+    endDate=parts[1]||"";
+  }
   openModal(`
     <div class="modal-header"><h3>${r?"编辑":"新增"}结算台账</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
     <div class="modal-body">
       <div class="form-grid">
-        <div class="form-group"><label>归属公司 <span class="req">*</span></label><select id="f_归属公司" onchange="updateBatchOptions()">${COMPANIES.map(c=>`<option value="${c}" ${r&&r["归属公司"]===c?"selected":""}>${c}</option>`).join("")}</select></div>
-        <div class="form-group"><label>对应送货批次</label><select id="f_对应送货批次" multiple style="height:80px">${delivery.map(d=>`<option value="${d["单据编号"]}" ${r&&r["对应送货批次"]&&r["对应送货批次"].includes(d["单据编号"])?"selected":""}>${escapeHtml(d["单据编号"])} - ${escapeHtml(d["商品名称"]||"")} ${fmtMoney(Number(d["供货销售单价"]||0)*Number(d["供货数量"]||0))}</option>`).join("")}</select><div class="hint">按住Ctrl多选，选中后点下方按钮自动汇总</div></div>
-        <div class="form-group"><label>对账周期 <span class="req">*</span></label><input type="text" id="f_对账周期" value="${r?r["对账周期"]:(new Date().getFullYear()+"-"+String(new Date().getMonth()+1).padStart(2,"0"))}" placeholder="如 2026-07" required></div>
-        <div class="form-group"><label>对账金额 <span class="req">*</span></label><div style="display:flex;gap:4px"><input type="number" id="f_对账金额" value="${r?r["对账金额"]:""}" step="0.01" oninput="calcSettlement()" required><button class="btn btn-sm btn-outline" onclick="autoCalcSettleAmt()">汇总选中批次</button></div></div>
+        <div class="form-group"><label>归属公司 <span class="req">*</span></label><select id="f_归属公司">${COMPANIES.map(c=>`<option value="${c}" ${r&&r["归属公司"]===c?"selected":""}>${c}</option>`).join("")}</select></div>
+        <div class="form-group full"><label>对应送货批次（日期范围）</label><div style="display:flex;gap:8px;align-items:center"><input type="date" id="f_批次开始日期" value="${startDate}" style="flex:1"><span>至</span><input type="date" id="f_批次结束日期" value="${endDate}" style="flex:1"><button class="btn btn-sm btn-outline" onclick="autoCalcSettleAmt()">汇总此区间</button></div><div class="hint">选择开始和结束日期，点击汇总自动计算该区间内所有送货单金额</div></div>
+        <div class="form-group"><label>对账周期 <span class="req">*</span></label><input type="text" id="f_对账周期" value="${r?r["对账周期"]:defaultMonth}" placeholder="如 2026-07" required></div>
+        <div class="form-group"><label>对账金额 <span class="req">*</span></label><input type="number" id="f_对账金额" value="${r?r["对账金额"]:""}" step="0.01" oninput="calcSettlement()" required></div>
         <div class="form-group"><label>已开票金额</label><input type="number" id="f_已开票金额" value="${r?r["已开票金额"]:"0"}" step="0.01" oninput="calcSettlement()"></div>
         <div class="form-group"><label>未开票金额（自动）</label><input type="text" id="f_未开票金额" class="calc-field" readonly></div>
         <div class="form-group"><label>发票号码</label><input type="text" id="f_发票号码" value="${escapeHtml(r?r["发票号码"]:"")}"></div>
@@ -1331,24 +1346,25 @@ function openSettlementForm(id){
   `);
   if(r)calcSettlement();
 }
-function updateBatchOptions(){
-  const company=$("#f_归属公司").value;
-  const delivery=loadData(KEYS.delivery).filter(d=>d["业务归属公司"]===company);
-  const sel=$("#f_对应送货批次");
-  sel.innerHTML=delivery.map(d=>`<option value="${d["单据编号"]}">${escapeHtml(d["单据编号"])} - ${escapeHtml(d["商品名称"]||"")} ${fmtMoney(Number(d["供货销售单价"]||0)*Number(d["供货数量"]||0))}</option>`).join("");
-}
 function autoCalcSettleAmt(){
-  const sel=$("#f_对应送货批次");
-  const selected=Array.from(sel.selectedOptions).map(o=>o.value);
-  if(selected.length===0){showToast("请先选择送货批次","error");return}
-  const delivery=loadData(KEYS.delivery);
+  const company=$("#f_归属公司").value;
+  const start=$("#f_批次开始日期").value;
+  const end=$("#f_批次结束日期").value;
+  if(!start||!end){showToast("请先选择开始和结束日期","error");return}
+  if(start>end){showToast("开始日期不能晚于结束日期","error");return}
+  const delivery=loadData(KEYS.delivery).filter(d=>d["业务归属公司"]===company && d["送货日期"]>=start && d["送货日期"]<=end);
   let total=0;
-  selected.forEach(no=>{
-    const d=delivery.find(x=>x["单据编号"]===no);
-    if(d)total+=Number(d["供货销售单价"]||0)*Number(d["供货数量"]||0);
+  delivery.forEach(d=>{
+    total+=Number(d["供货销售单价"]||0)*Number(d["供货数量"]||0);
   });
   $("#f_对账金额").value=total.toFixed(2);
+  if($("#f_对账周期").value && start.slice(0,7)===$("#f_对账周期").value){
+    // 同周期无需处理
+  } else if(start.slice(0,7)===end.slice(0,7)){
+    $("#f_对账周期").value=start.slice(0,7);
+  }
   calcSettlement();
+  showToast(`已汇总 ${delivery.length} 笔送货单，金额 ${fmtMoney(total)}`,"success");
 }
 function calcSettlement(){
   const amt=Number($("#f_对账金额").value)||0;
@@ -1358,13 +1374,18 @@ function calcSettlement(){
   $("#f_待结算余额").value=(amt-pay).toFixed(2);
 }
 function saveSettlement(id){
-  const fields=["归属公司","对应送货批次","对账周期","对账金额","已开票金额","未开票金额","发票号码","开票日期","甲方回款金额","回款日期","待结算余额","结算状态"];
+  const fields=["归属公司","对账周期","对账金额","已开票金额","未开票金额","发票号码","开票日期","甲方回款金额","回款日期","待结算余额","结算状态"];
   if(!$("#f_归属公司").value||!$("#f_对账金额").value){showToast("请填写必填字段","error");return}
   const obj={id:id||genId("S")};
   fields.forEach(f=>obj[f]=$("#f_"+f).value);
-  // 对应送货批次：多选合并为逗号分隔
-  const batchSel=$("#f_对应送货批次");
-  if(batchSel)obj["对应送货批次"]=Array.from(batchSel.selectedOptions).map(o=>o.value).join(",");
+  // 对应送货批次：日期范围拼接
+  const start=$("#f_批次开始日期")?$("#f_批次开始日期").value:"";
+  const end=$("#f_批次结束日期")?$("#f_批次结束日期").value:"";
+  if(start && end){
+    obj["对应送货批次"]=start+" 至 "+end;
+  } else {
+    obj["对应送货批次"]=start||end||obj["对应送货批次"]||"";
+  }
   const data=loadData(KEYS.settlement);
   if(id){const i=data.findIndex(x=>x.id===id);if(i>=0)data[i]=obj}
   else data.push(obj);
@@ -2215,9 +2236,9 @@ function initSampleData(){
   ]);
 
   saveData(KEYS.settlement,[
-    {id:"S001",归属公司:"水发智慧服务有限公司（总部）",对应送货批次:"SH20260701001",对账周期:lastMonth,对账金额:"240.00",已开票金额:"240.00",未开票金额:"0.00",发票号码:"FP"+lastMonth.replace("-","")+"001",开票日期:lastMonth+"-25",甲方回款金额:"240.00",回款日期:lastMonth+"-28",待结算余额:"0.00",结算状态:"全款结清"},
-    {id:"S002",归属公司:"水发智慧服务有限公司伊宁市分公司",对应送货批次:"SH20260702002",对账周期:lastMonth,对账金额:"750.00",已开票金额:"750.00",未开票金额:"0.00",发票号码:"FP"+lastMonth.replace("-","")+"002",开票日期:lastMonth+"-26",甲方回款金额:"500.00",回款日期:lastMonth+"-30",待结算余额:"250.00",结算状态:"部分回款"},
-    {id:"S003",归属公司:"水发智慧服务有限公司北屯市分公司",对应送货批次:"SH20260703003",对账周期:ym,对账金额:"450.00",已开票金额:"0.00",未开票金额:"450.00",发票号码:"",开票日期:"",甲方回款金额:"0.00",回款日期:"",待结算余额:"450.00",结算状态:"待开票"}
+    {id:"S001",归属公司:"水发智慧服务有限公司（总部）",对应送货批次:lastMonth+"-01 至 "+lastMonth+"-30",对账周期:lastMonth,对账金额:"240.00",已开票金额:"240.00",未开票金额:"0.00",发票号码:"FP"+lastMonth.replace("-","")+"001",开票日期:lastMonth+"-25",甲方回款金额:"240.00",回款日期:lastMonth+"-28",待结算余额:"0.00",结算状态:"全款结清"},
+    {id:"S002",归属公司:"水发智慧服务有限公司伊宁市分公司",对应送货批次:lastMonth+"-01 至 "+lastMonth+"-30",对账周期:lastMonth,对账金额:"750.00",已开票金额:"750.00",未开票金额:"0.00",发票号码:"FP"+lastMonth.replace("-","")+"002",开票日期:lastMonth+"-26",甲方回款金额:"500.00",回款日期:lastMonth+"-30",待结算余额:"250.00",结算状态:"部分回款"},
+    {id:"S003",归属公司:"水发智慧服务有限公司北屯市分公司",对应送货批次:ym+"-01 至 "+ym+"-31",对账周期:ym,对账金额:"450.00",已开票金额:"0.00",未开票金额:"450.00",发票号码:"",开票日期:"",甲方回款金额:"0.00",回款日期:"",待结算余额:"450.00",结算状态:"待开票"}
   ]);
 
   saveData(KEYS.retail,[
