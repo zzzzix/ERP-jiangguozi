@@ -35,6 +35,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .company-filter select{padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;background:#fff;max-width:240px}
 .header-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .header-actions .date-text{font-size:13px;color:#64748b}
+.cloud-btn{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:5px 10px;border:1px solid #2563eb;background:#eff6ff;color:#2563eb;border-radius:6px;cursor:pointer;font-family:inherit}
+.cloud-btn:hover{background:#dbeafe}
+.cloud-btn #cloudStatus{font-weight:600}
 
 /* Buttons */
 .btn{padding:7px 14px;border:none;border-radius:6px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;transition:all .15s;font-family:inherit;white-space:nowrap}
@@ -219,9 +222,46 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px;min-width:60
 .cell-editor .status-btn.active{background:#8a9a6d;color:#fff;border-color:#8a9a6d}
 .cell-editor .status-clear{color:#dc2626;background:#fff;border:1px solid #fecaca}
 .cell-editor .status-clear:hover{background:#fef2f2}
+.login-screen{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1e3a5f,#2c5364);padding:20px}
+.login-card{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.35);width:100%;max-width:360px;padding:34px 28px;text-align:center;box-sizing:border-box}
+.login-logo{font-size:24px;font-weight:700;color:#1e3a5f;margin-bottom:4px}
+.login-sub{font-size:13px;color:#64748b;margin:0 0 24px}
+.login-form .form-group{margin-bottom:14px;text-align:left}
+.login-form label{display:block;font-size:13px;color:#334155;margin-bottom:6px}
+.login-form input{width:100%;padding:12px 14px;font-size:16px;border:1px solid #d6e0e8;border-radius:10px;box-sizing:border-box;min-height:44px}
+.login-form input:focus{outline:none;border-color:#2c5364}
+.login-form .btn-login{width:100%;padding:14px;font-size:16px;background:#2c5364;color:#fff;border:none;border-radius:10px;cursor:pointer;margin-top:8px;min-height:48px}
+.login-form .btn-login:active{background:#1e3a5f}
+.login-err{color:#dc2626;font-size:13px;min-height:18px;margin:0 0 8px}
+.login-hint{font-size:12px;color:#94a3b8;margin-top:14px;line-height:1.5}
+.logout-btn{margin-left:8px;background:#fff;border:1px solid #cbd5e1;color:#475569;border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;min-height:40px}
+.logout-btn:active{background:#f1f5f9}
+.sample-badge{display:inline-block;background:#f59e0b;color:#fff;font-size:11px;padding:1px 6px;border-radius:4px;margin-right:6px;vertical-align:middle;font-weight:500}
 </style>
-</head>
+<script src="https://beacon.cdn.qq.com/sdk/4.5.9/beacon_web.min.js"></script>
+<script>
+(function(){
+  try{
+    var beacon=new BeaconAction({
+      appkey:'0WEB06U85YBSLJNL',
+      versionCode:'1.0.0',
+      channelID:'share',
+      delay:1000,
+      sessionDuration:30*60*1000,
+      isOversea:false,
+      needReportRqdEvent:false
+    });
+    beacon.onDirectUserAction('preview_page_view',{
+      'url':location.href,
+      'referrer':document.referrer,
+      'title':document.title,
+      'sandbox_id':'a6cff81220224b35a6ca30fc36b65d65'
+    });
+  }catch(e){}
+})();
+</script></head>
 <body>
+<div id="loginScreen" class="login-screen"><div class="login-card"><div class="login-logo">水发智慧</div><p class="login-sub">财务业务管理系统</p><div id="loginFormArea"></div></div></div>
 <div id="app">
   <aside id="sidebar">
     <div class="sidebar-header">
@@ -234,6 +274,7 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px;min-width:60
       <button onclick="document.getElementById('fileInputAll').click()">导入恢复备份</button>
       <input type="file" id="fileInputAll" accept=".json" style="display:none" onchange="importAllBackup(event)">
       <button onclick="confirmClearAll()" style="border-color:#7f1d1d;background:#7f1d1d">清空全部数据</button>
+      <button onclick="clearSampleData()" style="border-color:#b45309;background:#f59e0b;color:#fff">仅清除示例数据</button>
     </div>
   </aside>
   <main id="main">
@@ -245,6 +286,8 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px;min-width:60
       </div>
       <div class="header-actions">
         <span class="date-text" id="todayDate"></span>
+        <button class="cloud-btn" onclick="openCloudSync()" title="云同步设置">☁ <span id="cloudStatus">未同步</span></button>
+        <button class="logout-btn" id="logoutBtn" style="display:none" onclick="doLogout()">退出</button>
       </div>
     </header>
     <div id="content"></div>
@@ -361,11 +404,117 @@ async function initStorage(){
   _idbReady=true;
 }
 function loadData(k,def){const v=DB_CACHE[k];return(v===undefined||v===null)?(def!==undefined?def:[]):v;}
-function saveData(k,d){DB_CACHE[k]=d;if(_idb){_writeChain=_writeChain.then(()=>_idbPut(k,d)).catch(()=>{});}updateStorageUsageDebounced();return d;}
+function saveData(k,d){DB_CACHE[k]=d;if(_idb){_writeChain=_writeChain.then(()=>_idbPut(k,d)).catch(()=>{});}updateStorageUsageDebounced();scheduleCloudPush();return d;}
 function getFlag(name){const v=DB_CACHE[name];return v==="1"||v===1||v===true;}
 function setFlag(name,val){DB_CACHE[name]=val;if(_idb){_writeChain=_writeChain.then(()=>_idbPut(name,val)).catch(()=>{});}}
 function clearAllData(){Object.values(KEYS).forEach(k=>{delete DB_CACHE[k];_idbDelete(k);});}
 function updateStorageUsageDebounced(){if(_usageTimer)clearTimeout(_usageTimer);_usageTimer=setTimeout(()=>{if(typeof updateStorageUsage==="function")updateStorageUsage();},400);}
+/* ====== 云同步（Supabase，加密存储，零外部依赖） ====== */
+const CLOUD_KEY="wb_erp_cloudsync";
+const SUPABASE_URL="https://gramwlpss1kglreqnuek.supabase.co";
+const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdyYW13bHBzc2xrZ2xyZXFudWVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2NTg1MDYsImV4cCI6MjEwMTIzNDUwNn0.cmxoxJePim7JZmbH4oBqaT4BcH-2nc3WsQXVo9wGRYY";
+function getCloudCfg(){try{let c=JSON.parse(localStorage.getItem(CLOUD_KEY)||"null");if(!c)c={};if(!c.url)c.url=SUPABASE_URL;if(!c.anonKey)c.anonKey=SUPABASE_ANON_KEY;return c;}catch(e){return {url:SUPABASE_URL,anonKey:SUPABASE_ANON_KEY};}}
+function setCloudCfg(c){localStorage.setItem(CLOUD_KEY,JSON.stringify(c));}
+function updateCloudStatus(txt,ok){const el=$("#cloudStatus");if(el){el.textContent=txt;el.style.color=ok?"#4ade80":(txt==="同步失败"?"#f87171":"#facc15");}}
+let _cloudTimer=null;
+function scheduleCloudPush(){
+  const cfg=getCloudCfg();
+  if(!cfg||!cfg.enabled)return;
+  if(_cloudTimer)clearTimeout(_cloudTimer);
+  _cloudTimer=setTimeout(()=>{ pushToCloud().then(()=>updateCloudStatus("已同步",true)).catch(e=>{console.warn("云同步推送失败",e);updateCloudStatus("同步失败");}); },2500);
+}
+function _b64FromBuf(buf){let s="";const b=new Uint8Array(buf);for(let i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s);}
+function _bufFromB64(b64){const s=atob(b64);const b=new Uint8Array(s.length);for(let i=0;i<s.length;i++)b[i]=s.charCodeAt(i);return b;}
+async function _deriveKey(pass,salt){
+  const enc=new TextEncoder();
+  const km=await crypto.subtle.importKey("raw",enc.encode(pass),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:100000,hash:"SHA-256"},km,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
+}
+async function cryptoEncrypt(obj,pass){
+  const enc=new TextEncoder();
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await _deriveKey(pass,salt);
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(JSON.stringify(obj)));
+  const buf=new Uint8Array(28+ct.byteLength);buf.set(salt,0);buf.set(iv,16);buf.set(new Uint8Array(ct),28);
+  return _b64FromBuf(buf);
+}
+async function cryptoDecrypt(b64,pass){
+  const buf=_bufFromB64(b64);
+  const salt=buf.slice(0,16),iv=buf.slice(16,28),ct=buf.slice(28);
+  const key=await _deriveKey(pass,salt);
+  const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,ct);
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+async function collectCloudData(){
+  const data={};
+  Object.entries(KEYS).forEach(([k,v])=>{data[k]=DB_CACHE[v]!==undefined?DB_CACHE[v]:[];});
+  return {data,ts:Date.now()};
+}
+async function pushToCloud(){
+  const cfg=getCloudCfg();
+  if(!cfg||!cfg.enabled||!cfg.url||!cfg.anonKey||!cfg.passphrase)return;
+  const payload=await cryptoEncrypt(await collectCloudData(),cfg.passphrase);
+  const url=cfg.url.replace(/\/$/,"")+"/rest/v1/erp_data";
+  const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey,"Prefer":"resolution=merge-duplicates"},body:JSON.stringify({id:"main",payload,updated_at:new Date().toISOString()})});
+  if(!res.ok){const t=await res.text();throw new Error("push "+res.status+" "+t);}
+  setFlag("wb_erp_lastpush",Date.now());
+}
+async function pullFromCloud(){
+  const cfg=getCloudCfg();
+  if(!cfg||!cfg.enabled||!cfg.url||!cfg.anonKey||!cfg.passphrase)return;
+  const url=cfg.url.replace(/\/$/,"")+"/rest/v1/erp_data?id=eq.main&select=payload,updated_at";
+  const res=await fetch(url,{headers:{"apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey}});
+  if(!res.ok)throw new Error("pull "+res.status);
+  const rows=await res.json();
+  if(!rows||!rows.length)return;
+  const obj=await cryptoDecrypt(rows[0].payload,cfg.passphrase);
+  if(obj&&obj.data){
+    Object.entries(KEYS).forEach(([k,v])=>{if(obj.data[k]!==undefined){DB_CACHE[v]=obj.data[k];if(_idb){_writeChain=_writeChain.then(()=>_idbPut(v,obj.data[k])).catch(()=>{});}}});
+  }
+  setFlag("wb_erp_lastpush",obj.ts||Date.now());
+}
+async function initCloudSync(){
+  const cfg=getCloudCfg();
+  if(!cfg||!cfg.enabled)return;
+  try{ await pushToCloud(); }catch(e){ console.warn("init push 失败",e); }
+  await pullFromCloud();
+  updateCloudStatus("已同步",true);
+}
+function openCloudSync(){
+  const cfg=getCloudCfg()||{};
+  openModal(`
+    <div class="modal-header"><h3>☁ 云同步设置</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:#94a3b8;margin:0 0 12px">数据用你的口令加密后存到 Supabase 私有库，多设备输入同一口令即自动同步。配置仅存本机，不上传。</p>
+      <div class="form-grid">
+        <div class="form-group" style="grid-column:1/3"><label>Supabase 项目 URL（已预置）</label><input type="text" id="cs_url" value="${escapeHtml(SUPABASE_URL)}" readonly style="background:#f1f5f9;color:#64748b"></div>
+        ${SUPABASE_ANON_KEY?``:`<div class="form-group" style="grid-column:1/3"><label>anon public key（首次需填，仅存本机）</label><input type="text" id="cs_key" value="${escapeHtml(cfg.anonKey||"")}" placeholder="eyJhbGci..."></div>`}
+        <div class="form-group" style="grid-column:1/3"><label>同步口令（自定义，多设备须一致）</label><input type="password" id="cs_pass" value="${escapeHtml(cfg.passphrase||"")}" placeholder="设一个只有你知道的密码"></div>
+        <div class="form-group" style="grid-column:1/3;display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="cs_en" ${cfg.enabled?"checked":""}><label style="margin:0">启用云同步</label>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn btn-primary" onclick="saveCloudCfg()">保存配置</button>
+        <button class="btn btn-outline" onclick="manualPush()">立即上传到云端</button>
+        <button class="btn btn-outline" onclick="manualPull()">从云端拉取</button>
+      </div>
+      <p style="font-size:11px;color:#64748b;margin-top:10px">首次启用：先在本机录入/确认数据，点「立即上传到云端」推上去；其他设备启用同步后打开会自动拉取。</p>
+    </div>
+  `);
+}
+function saveCloudCfg(){
+  const keyInput=SUPABASE_ANON_KEY?SUPABASE_ANON_KEY:($("#cs_key")?$("#cs_key").value.trim():"");
+  const cfg={url:SUPABASE_URL,anonKey:keyInput,passphrase:$("#cs_pass").value,enabled:$("#cs_en").checked};
+  if(cfg.enabled&&(!cfg.anonKey||!cfg.passphrase)){showToast("启用需填 anon key 与同步口令","error");return;}
+  setCloudCfg(cfg);
+  showToast("云同步配置已保存","success");
+  closeModal();
+  if(cfg.enabled){ initCloudSync().then(()=>renderView(currentView)).catch(e=>{console.warn(e);showToast("拉取失败，检查配置","error");}); }
+}
+async function manualPush(){ try{ await pushToCloud(); updateCloudStatus("已同步",true); showToast("已上传到云端","success"); }catch(e){ console.warn(e); showToast("上传失败："+e.message,"error"); } }
+async function manualPull(){ try{ await pullFromCloud(); updateCloudStatus("已同步",true); showToast("已从云端拉取","success"); renderView(currentView); }catch(e){ console.warn(e); showToast("拉取失败："+e.message,"error"); } }
 function genId(p){return(p||"D")+Date.now().toString(36)+Math.random().toString(36).slice(2,5)}
 function todayStr(){return new Date().toISOString().split("T")[0]}
 function fmtDate(d){if(!d)return"-";return d}
@@ -547,8 +696,9 @@ function renderDataTable(headers,data,colRenderer,actionsRenderer){
   html+="</tr></thead><tbody>";
   data.forEach((row,i)=>{
     html+="<tr>";
-    headers.forEach(h=>{
-      const content=colRenderer?colRenderer(h,row,i):escapeHtml(row[h]);
+    headers.forEach((h,hi)=>{
+      let content=colRenderer?colRenderer(h,row,i):escapeHtml(row[h]);
+      if(row._sample && hi===0)content='<span class="sample-badge">示例</span>'+content;
       html+=`<td>${content}</td>`;
     });
     if(actionsRenderer){
@@ -609,6 +759,21 @@ function confirmClearAll(){
       showToast("全部数据已清空","success");
       renderView(currentView);
     },true);
+  },true);
+}
+function clearSampleData(){
+  confirmDialog("确定清除所有标记为「示例」的数据吗？\n你的真实录入数据将完整保留，且不会触发重新生成。",()=>{
+    let n=0;
+    Object.values(KEYS).forEach(k=>{
+      const d=loadData(k);
+      if(Array.isArray(d)){
+        const kept=d.filter(r=>!(r&&r._sample));
+        n+=d.length-kept.length;
+        saveData(k,kept);
+      }
+    });
+    showToast("已清除 "+n+" 条示例数据，真实数据保留","success");
+    renderView(currentView);
   },true);
 }
 
@@ -1635,7 +1800,7 @@ function renderAttendance(){
       const s=computeAttendanceSummary(e.姓名,year,month,total);
       html+=`<tr>
         <td class="emp-no">${escapeHtml(e.工号||"")}</td>
-        <td class="emp-name">${escapeHtml(e.姓名||"")}</td>`;
+        <td class="emp-name">${e._sample?'<span class="sample-badge">示例</span>':''}${escapeHtml(e.姓名||"")}</td>`;
       for(let d=1;d<=31;d++){
         if(d<=total){
           const date=ymStr(year,month)+"-"+pad2(d);
@@ -2208,6 +2373,7 @@ function deleteRecord(key,id){
 }
 
 /* ========== 示例数据 ========== */
+function seedMark(arr){return arr.map(r=>({...r,_sample:true}));}
 function initSampleData(){
   if(getFlag("wb_erp_initialized"))return;
   if(loadData(KEYS.products).length>0){setFlag("wb_erp_initialized","1");return;}
@@ -2215,42 +2381,42 @@ function initSampleData(){
   const ym=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0");
   const lastMonth=(now.getMonth()===0?now.getFullYear()-1:now.getFullYear())+"-"+String(now.getMonth()===0?12:now.getMonth()).padStart(2,"0");
 
-  saveData(KEYS.products,[
+  saveData(KEYS.products,seedMark([
     {id:"P001",商品名称:"农夫山泉",规格:"550ml",统一成本价:"0.80",商超供货售价:"1.20",线上零售售价:"2.00",礼盒定价:"",商品分类:"饮料"},
     {id:"P002",商品名称:"可口可乐",规格:"330ml",统一成本价:"1.50",商超供货售价:"2.50",线上零售售价:"3.50",礼盒定价:"",商品分类:"饮料"},
     {id:"P003",商品名称:"康师傅冰红茶",规格:"500ml",统一成本价:"1.80",商超供货售价:"3.00",线上零售售价:"4.50",礼盒定价:"",商品分类:"饮料"},
     {id:"P004",商品名称:"卫龙辣条",规格:"大包",统一成本价:"3.50",商超供货售价:"5.50",线上零售售价:"8.00",礼盒定价:"",商品分类:"休闲食品"},
     {id:"P005",商品名称:"中秋月饼礼盒",规格:"6枚装",统一成本价:"45.00",商超供货售价:"",线上零售售价:"",礼盒定价:"88.00",商品分类:"节日礼盒"}
-  ]);
+  ]));
 
-  saveData(KEYS.delivery,[
+  saveData(KEYS.delivery,seedMark([
     {id:"D001",单据编号:"SH20260701001",业务归属公司:"水发智慧服务有限公司（总部）",送货日期:lastMonth+"-15",商品名称:"农夫山泉",规格:"550ml",单位:"瓶",供货数量:"200",成本单价:"0.80",供货销售单价:"1.20",单品毛利:"0.40",毛利合计:"80.00",收货人:"张经理",商超门店名称:"好家乡超市（总部店）",备注:""},
     {id:"D002",单据编号:"SH20260702002",业务归属公司:"水发智慧服务有限公司伊宁市分公司",送货日期:lastMonth+"-18",商品名称:"可口可乐",规格:"330ml",单位:"瓶",供货数量:"300",成本单价:"1.50",供货销售单价:"2.50",单品毛利:"1.00",毛利合计:"300.00",收货人:"李店长",商超门店名称:"爱家超市（伊宁店）",备注:"含陈列费"},
     {id:"D003",单据编号:"SH20260703003",业务归属公司:"水发智慧服务有限公司北屯市分公司",送货日期:ym+"-05",商品名称:"康师傅冰红茶",规格:"500ml",单位:"瓶",供货数量:"150",成本单价:"1.80",供货销售单价:"3.00",单品毛利:"1.20",毛利合计:"180.00",收货人:"王主任",商超门店名称:"汇通超市（北屯店）",备注:""},
     {id:"D004",单据编号:"SH20260704004",业务归属公司:"水发智慧服务建设有限公司",送货日期:ym+"-08",商品名称:"卫龙辣条",规格:"大包",单位:"包",供货数量:"100",成本单价:"3.50",供货销售单价:"5.50",单品毛利:"2.00",毛利合计:"200.00",收货人:"赵主管",商超门店名称:"好家乡超市（建设路店）",备注:"新品上架"},
     {id:"D005",单据编号:"SH20260705005",业务归属公司:"水发智慧服务电力有限公司",送货日期:ym+"-12",商品名称:"农夫山泉",规格:"550ml",单位:"瓶",供货数量:"500",成本单价:"0.80",供货销售单价:"1.20",单品毛利:"0.40",毛利合计:"200.00",收货人:"陈经理",商超门店名称:"万家福超市（电力店）",备注:"夏季促销"}
-  ]);
+  ]));
 
-  saveData(KEYS.returns,[
+  saveData(KEYS.returns,seedMark([
     {id:"R001",单据编号:"RT20260701001",关联原送货单号:"SH20260701001",业务归属公司:"水发智慧服务有限公司（总部）",退货日期:ym+"-03",商品名称:"农夫山泉",规格:"550ml",退货数量:"20",成本单价:"0.80",销售单价:"1.20",退货毛利冲减:"8.00",商超门店:"好家乡超市（总部店）",退货原因:"临期退货"}
-  ]);
+  ]));
 
-  saveData(KEYS.settlement,[
+  saveData(KEYS.settlement,seedMark([
     {id:"S001",归属公司:"水发智慧服务有限公司（总部）",对应送货批次:lastMonth+"-01 至 "+lastMonth+"-30",对账周期:lastMonth,对账金额:"240.00",已开票金额:"240.00",未开票金额:"0.00",发票号码:"FP"+lastMonth.replace("-","")+"001",开票日期:lastMonth+"-25",甲方回款金额:"240.00",回款日期:lastMonth+"-28",待结算余额:"0.00",结算状态:"全款结清"},
     {id:"S002",归属公司:"水发智慧服务有限公司伊宁市分公司",对应送货批次:lastMonth+"-01 至 "+lastMonth+"-30",对账周期:lastMonth,对账金额:"750.00",已开票金额:"750.00",未开票金额:"0.00",发票号码:"FP"+lastMonth.replace("-","")+"002",开票日期:lastMonth+"-26",甲方回款金额:"500.00",回款日期:lastMonth+"-30",待结算余额:"250.00",结算状态:"部分回款"},
     {id:"S003",归属公司:"水发智慧服务有限公司北屯市分公司",对应送货批次:ym+"-01 至 "+ym+"-31",对账周期:ym,对账金额:"450.00",已开票金额:"0.00",未开票金额:"450.00",发票号码:"",开票日期:"",甲方回款金额:"0.00",回款日期:"",待结算余额:"450.00",结算状态:"待开票"}
-  ]);
+  ]));
 
-  saveData(KEYS.retail,[
+  saveData(KEYS.retail,seedMark([
     {id:"RT001",业务类型:"线上零售",业务归属公司:"水发智慧服务有限公司（总部）",订单日期:ym+"-10",商品:"可口可乐",数量:"50",成本:"75.00",销售额:"175.00",毛利:"100.00",客户信息:"美团外卖-张先生"},
     {id:"RT002",业务类型:"节假日礼盒配送",业务归属公司:"水发智慧服务建设有限公司",订单日期:ym+"-15",商品:"中秋月饼礼盒",数量:"20",成本:"900.00",销售额:"1760.00",毛利:"860.00",客户信息:"企业团购-刘总 138xxxx"}
-  ]);
+  ]));
 
-  saveData(KEYS.employees,[
+  saveData(KEYS.employees,seedMark([
     {id:"E001",工号:"001",姓名:"张三"},
     {id:"E002",工号:"002",姓名:"李四"},
     {id:"E003",工号:"003",姓名:"王五"}
-  ]);
+  ]));
 
   // 生成当月示例考勤记录（前7天）供月度表直观展示
   const sampleAtt=[];
@@ -2273,18 +2439,61 @@ function initSampleData(){
       });
     });
   });
-  saveData(KEYS.attendance,sampleAtt);
+  saveData(KEYS.attendance,seedMark(sampleAtt));
 
-  saveData(KEYS.salary,[
+  saveData(KEYS.salary,seedMark([
     {id:"SA001",员工姓名:"张三",核算周期:ym,基本工资:"5000",绩效:"1500",加班工资:"200",扣款:"0",应发工资:"6700.00",实发工资:"6700.00",发放日期:ym+"-10"},
     {id:"SA002",员工姓名:"李四",核算周期:ym,基本工资:"4500",绩效:"1000",加班工资:"0",扣款:"50",应发工资:"5450.00",实发工资:"5400.00",发放日期:ym+"-10"}
-  ]);
+  ]));
   setFlag("wb_erp_initialized","1");
 }
 
 /* ========== 初始化 ========== */
-async function init(){
-  await initStorage();
+/* ====== 登录门禁（纯前端本地校验，防误触用，非真安全） ====== */
+const AUTH_KEY="wb_erp_auth";
+function getAuth(){try{return JSON.parse(localStorage.getItem(AUTH_KEY)||"null");}catch(e){return null;}}
+function setAuth(a){localStorage.setItem(AUTH_KEY,JSON.stringify(a));}
+function isAuthed(){return sessionStorage.getItem("wb_erp_session")==="1" && !!getAuth();}
+async function sha256(s){const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");}
+function showLoginScreen(){
+  $("#loginScreen").style.display="flex";
+  const auth=getAuth();
+  const area=$("#loginFormArea");
+  if(auth){
+    area.innerHTML='<form class="login-form" onsubmit="return false"><div class="login-err" id="loginErr"></div><div class="form-group"><label>用户名</label><input id="lg_user" type="text" placeholder="用户名" autocomplete="username"></div><div class="form-group"><label>密码</label><input id="lg_pass" type="password" placeholder="密码" autocomplete="current-password"></div><button class="btn-login" onclick="doLogin()">登录</button><div class="login-hint">登录后可查看全部业务数据</div></form>';
+  }else{
+    area.innerHTML='<form class="login-form" onsubmit="return false"><div class="login-err" id="loginErr"></div><div class="form-group"><label>设置管理员账号</label><input id="lg_user" type="text" placeholder="如 张三" autocomplete="username"></div><div class="form-group"><label>密码（至少6位）</label><input id="lg_pass" type="password" placeholder="密码" autocomplete="new-password"></div><div class="form-group"><label>确认密码</label><input id="lg_pass2" type="password" placeholder="再次输入" autocomplete="new-password"></div><button class="btn-login" onclick="doSetup()">创建账号并进入</button><div class="login-hint">首次使用请设置账号，之后凭账号登录查看数据</div></form>';
+  }
+  const inp=area.querySelector("input"); if(inp)inp.focus();
+}
+async function doSetup(){
+  const u=$("#lg_user").value.trim(), p=$("#lg_pass").value, p2=$("#lg_pass2").value;
+  const err=$("#loginErr");
+  if(!u||!p){err.textContent="请填写用户名和密码";return;}
+  if(p.length<6){err.textContent="密码至少6位";return;}
+  if(p!==p2){err.textContent="两次密码不一致";return;}
+  setAuth({user:u,passHash:await sha256(p)});
+  enterApp();
+}
+async function doLogin(){
+  const u=$("#lg_user").value.trim(), p=$("#lg_pass").value;
+  const auth=getAuth();
+  if(!auth||u!==auth.user||auth.passHash!==await sha256(p)){$("#loginErr").textContent="用户名或密码错误";return;}
+  enterApp();
+}
+function enterApp(){
+  sessionStorage.setItem("wb_erp_session","1");
+  $("#loginScreen").style.display="none";
+  const lb=$("#logoutBtn"); if(lb)lb.style.display="";
+  startApp();
+}
+function doLogout(){
+  sessionStorage.removeItem("wb_erp_session");
+  const lb=$("#logoutBtn"); if(lb)lb.style.display="none";
+  showLoginScreen();
+}
+async function startApp(){
+  try{ await initCloudSync(); }catch(e){ console.warn("云同步初始化失败",e); }
   initSampleData();
   seedCatalogOnce();
   seedDeliveriesOnce();
@@ -2299,6 +2508,11 @@ async function init(){
   initCompanyFilter();
   $("#todayDate").textContent="今天: "+todayStr();
   renderView("dashboard");
+}
+async function init(){
+  await initStorage();
+  if(!isAuthed()){ showLoginScreen(); return; }
+  startApp();
 }
 init();
 </script>
