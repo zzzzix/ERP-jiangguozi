@@ -1,0 +1,32 @@
+name: Auto-sync ERP from CloudStudio
+
+on:
+  schedule:
+    - cron: '17 * * * *'   # 每小时第17分钟自动跑一次
+  workflow_dispatch:       # 也支持手动点 "Run workflow" 立即同步
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download latest ERP HTML from CloudStudio
+        run: curl -fsSL "https://a6cff81220224b35a6ca30fc36b65d65.bj9.agentos-app.net/" -o index.html
+
+      - name: Commit if changed
+        run: |
+          git config user.name "auto-sync"
+          git config user.email "auto-sync@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add index.html
+            git commit -m "chore: auto-sync ERP from CloudStudio"
+            git push
+            echo "updated"
+          else
+            echo "already up to date"
+          fi
