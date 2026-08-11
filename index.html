@@ -1374,9 +1374,9 @@ function deliveryHTML(){
         <span>送货单管理</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openDeliveryForm()">新增送货单</button>
-          <button class="btn btn-success" onclick="exportCSV('${KEYS.delivery}','送货单_${todayStr()}.csv',${JSON.stringify(["业务归属公司","送货日期","商品名称","规格","单位","供货数量","成本单价","供货销售单价","单品毛利","毛利合计","发货件数","运费","运费小计","收货人","商超门店名称","备注"])})">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV('KEYS.delivery','送货单_${todayStr()}.csv',H('delivery'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.delivery}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('送货单导入模板.csv',${JSON.stringify(["业务归属公司","送货日期","商品名称","规格","单位","供货数量","成本单价","供货销售单价","单品毛利","毛利合计","发货件数","运费","运费小计","收货人","商超门店名称","备注"])})">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('送货单导入模板.csv',H('delivery'))"">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
@@ -1611,9 +1611,9 @@ function returnsHTML(){
         <span>退货单管理</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openReturnForm()">新增退货单</button>
-          <button class="btn btn-success" onclick="exportCSV('${KEYS.returns}','退货单_${todayStr()}.csv',${JSON.stringify(["单据编号","关联原送货单号","业务归属公司","退货日期","商品名称","规格","单位","退货数量","成本单价","销售单价","退货毛利冲减","商超门店","退货原因"])})">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV('KEYS.returns','退货单_${todayStr()}.csv',H('returns'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.returns}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('退货单导入模板.csv',${JSON.stringify(["单据编号","关联原送货单号","业务归属公司","退货日期","商品名称","规格","单位","退货数量","成本单价","销售单价","退货毛利冲减","商超门店","退货原因"])})">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('退货单导入模板.csv',H('returns'))"">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
@@ -1721,9 +1721,9 @@ function productsHTML(){
         <span>商品基础档案</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openProductForm()">新增商品</button>
-          <button class="btn btn-success" onclick="exportCSV('${KEYS.products}','商品档案_${todayStr()}.csv',${JSON.stringify(["商品名称","规格","单位","统一成本价","商超供货售价","线上零售售价","礼盒定价","商品分类"])})">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV('KEYS.products','商品档案_${todayStr()}.csv',H('products'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.products}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('商品档案导入模板.csv',${JSON.stringify(["商品名称","规格","单位","统一成本价","商超供货售价","线上零售售价","礼盒定价","商品分类"])})">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('商品档案导入模板.csv',H('products'))"">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
@@ -1806,9 +1806,9 @@ function settlementHTML(){
         <span>甲方结算 & 发票管理</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openSettlementForm()">新增结算</button>
-          <button class="btn btn-success" onclick="exportCSV('${KEYS.settlement}','结算发票_${todayStr()}.csv',${JSON.stringify(["归属公司","对应送货批次","对账周期","对账金额","已开票金额","未开票金额","发票号码","开票日期","甲方回款金额","回款日期","待结算余额","结算状态"])})">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV('KEYS.settlement','结算发票_${todayStr()}.csv',H('settlement'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.settlement}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('结算发票导入模板.csv',${JSON.stringify(["归属公司","对应送货批次","对账周期","对账金额","已开票金额","未开票金额","发票号码","开票日期","甲方回款金额","回款日期","待结算余额","结算状态"])})">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('结算发票导入模板.csv',H('settlement'))"">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
@@ -1944,9 +1944,9 @@ function retailHTML(){
         <span>零售业务台账（线上零售 + 礼盒配送）</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openRetailForm()">新增订单</button>
-          <button class="btn btn-success" onclick="exportCSV('${KEYS.retail}','零售台账_${todayStr()}.csv',${JSON.stringify(["业务类型","订单日期","商品","数量","成本","销售额","毛利","客户信息","业务归属公司"])})">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV('KEYS.retail','零售台账_${todayStr()}.csv',H('retail'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.retail}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('零售台账导入模板.csv',${JSON.stringify(["业务类型","订单日期","商品","数量","成本","销售额","毛利","客户信息","业务归属公司"])})">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('零售台账导入模板.csv',H('retail'))"">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
@@ -2119,9 +2119,9 @@ function attendanceHTML(){
       </div>
       <div class="sheet-toolbar">
         <button class="btn btn-primary" onclick="openEmployeeForm()">新增员工</button>
-        <button class="btn btn-success" onclick="exportCSV('${KEYS.attendance}','考勤记录_${todayStr()}.csv',${JSON.stringify(["员工姓名","考勤日期","出勤状态","加班时长","请假类型","请假天数"])})">导出Excel</button>
+        <button class="btn btn-success" onclick="exportCSV('KEYS.attendance','考勤记录_${todayStr()}.csv',H('attendance'))">导出Excel</button>
         <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.attendance}',r))">导入Excel</button>
-        <button class="btn btn-outline" onclick="downloadTemplate('考勤导入模板.csv',${JSON.stringify(["员工姓名","考勤日期","出勤状态","加班时长","请假类型","请假天数"])})">下载模板</button>
+        <button class="btn btn-outline" onclick="downloadTemplate('考勤导入模板.csv',H('attendance'))"">下载模板</button>
         <span class="tool-label" style="margin-left:auto">点击日期单元格可直接登记/修改考勤状态</span>
       </div>
       <div id="attendanceTable"></div>
@@ -2361,9 +2361,9 @@ function salaryHTML(){
         <span>薪资核算台账</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openSalaryForm()">新增薪资</button>
-          <button class="btn btn-success" onclick="exportCSV('${KEYS.salary}','薪资台账_${todayStr()}.csv',${JSON.stringify(["员工姓名","核算周期","基本工资","绩效","加班工资","扣款","应发工资","实发工资","发放日期"])})">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV('KEYS.salary','薪资台账_${todayStr()}.csv',H('salary'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.salary}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('薪资台账导入模板.csv',${JSON.stringify(["员工姓名","核算周期","基本工资","绩效","加班工资","扣款","应发工资","实发工资","发放日期"])})">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('薪资台账导入模板.csv',H('salary'))"">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
