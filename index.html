@@ -332,6 +332,17 @@ const KEYS = {
   salary: "wb_erp_salary"
 };
 
+const HEADERS = {
+  delivery: ["单据编号","业务归属公司","送货日期","商品名称","规格","单位","供货数量","成本单价","供货销售单价","单品毛利","毛利合计","发货件数","运费","运费小计","收货人","商超门店名称","备注"],
+  returns:  ["单据编号","关联原送货单号","业务归属公司","退货日期","商品名称","规格","单位","退货数量","成本单价","销售单价","退货毛利冲减","商超门店","退货原因"],
+  products: ["商品名称","规格","单位","统一成本价","商超供货售价","线上零售售价","礼盒定价","商品分类"],
+  settlement:["归属公司","对应送货批次","对账周期","对账金额","已开票金额","未开票金额","发票号码","开票日期","甲方回款金额","回款日期","待结算余额","结算状态"],
+  retail:   ["业务类型","业务归属公司","订单日期","商品","数量","成本","销售额","毛利","客户信息"],
+  attendance:["员工姓名","考勤日期","出勤状态","加班时长","请假类型","请假天数"],
+  salary:   ["员工姓名","核算周期","基本工资","绩效","加班工资","扣款","应发工资","实发工资","发放日期"]
+};
+function H(key){ return HEADERS[key]||[]; }
+
 const NAV = [
   {section:"业务总览",items:[
     {id:"dashboard",label:"财务总览",icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'}
@@ -722,9 +733,10 @@ function exportCSV(key,filename,headers){
   downloadFile(filename,toCSV(rows),"text/csv;charset=utf-8");
   showToast(`已导出 ${data.length} 条数据`,"success");
 }
-function downloadTemplate(filename,headers){
-  const example=headers.map((_,i)=>"示例"+(i+1));
-  downloadFile(filename,toCSV([headers,example]),"text/csv;charset=utf-8");
+function downloadTemplate(filename,headers,excludeCols){
+  const cols=(excludeCols||[]).length?headers.filter(h=>!(excludeCols||[]).includes(h)):headers;
+  const example=cols.map((_,i)=>"示例"+(i+1));
+  downloadFile(filename,toCSV([cols,example]),"text/csv;charset=utf-8");
   showToast("模板已下载，请按格式填写后导入","success");
 }
 let importCallback=null;
@@ -735,15 +747,28 @@ function triggerImport(cb){
 function handleFileInput(event){
   const file=event.target.files[0];
   if(!file)return;
+  const ext=(file.name.split('.').pop()||"").toLowerCase();
+  if(ext!=="csv"&&ext!=="txt"){
+    showToast("请上传 .csv 或 .txt 文件。Excel 编辑后请选择「另存为 → CSV(逗号分隔)(*.csv)」","error");
+    event.target.value="";
+    return;
+  }
   const reader=new FileReader();
   reader.onload=e=>{
-    const rows=parseCSV(e.target.result);
+    const text=e.target.result;
+    // 简单编码检测：若出现大量 GBK 乱码特征则提示
+    if(/[ÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ]/.test(text) && /[\u4e00-\u9fa5]/.test(text)===false){
+      showToast("文件编码异常，请重新用 UTF-8 编码保存 CSV","error");
+      event.target.value="";
+      return;
+    }
+    const rows=parseCSV(text);
     if(rows.length<2){showToast("文件为空或格式错误","error");return}
     const headers=rows[0];
     const dataRows=rows.slice(1);
     const records=dataRows.map(r=>{
-      const obj={id:genId("R")};
-      headers.forEach((h,i)=>obj[h]=r[i]||"");
+      const obj={};
+      headers.forEach((h,i)=>obj[h]=(r[i]!==undefined?r[i]:""));
       return obj;
     });
     if(importCallback)importCallback(records);
@@ -762,6 +787,77 @@ function importData(key,records){
     addEmployeesFromNames(records.map(r=>r["员工姓名"]).filter(Boolean));
   }
   showToast(`成功导入 ${records.length} 条数据`,"success");
+  renderView(currentView);
+}
+
+/* ====== 送货单专用导入：校验 + 自动计算 + 错误报告 ====== */
+function importDelivery(records){
+  const existing=loadData(KEYS.delivery);
+  const valid=[]; const errors=[];
+  const dateRe=/^\d{4}-\d{2}-\d{2}$/;
+  records.forEach((r,idx)=>{
+    const rowIdx=idx+2; // Excel 行号（含表头）
+    const msgs=[];
+    const company=(r["业务归属公司"]||"").trim();
+    const date=(r["送货日期"]||"").trim();
+    const prod=(r["商品名称"]||"").trim();
+    const qtyStr=(r["供货数量"]||"").trim();
+    const costStr=(r["成本单价"]||"").trim();
+    const priceStr=(r["供货销售单价"]||"").trim();
+
+    // 过滤全空行
+    if(!company&&!date&&!prod&&!qtyStr&&!costStr&&!priceStr){
+      return;
+    }
+
+    if(!company) msgs.push("缺少业务归属公司");
+    else if(!COMPANIES.includes(company)) msgs.push(`业务归属公司「${company}」不存在`);
+    if(!date) msgs.push("缺少送货日期");
+    else if(!dateRe.test(date)) msgs.push(`送货日期格式错误「${date}」，应为 YYYY-MM-DD`);
+    if(!prod) msgs.push("缺少商品名称");
+    const qty=Number(qtyStr); const cost=Number(costStr); const price=Number(priceStr);
+    if(!qtyStr||isNaN(qty)||qty<=0) msgs.push(`供货数量无效「${qtyStr}」`);
+    if(!costStr||isNaN(cost)||cost<0) msgs.push(`成本单价无效「${costStr}」`);
+    if(!priceStr||isNaN(price)||price<0) msgs.push(`供货销售单价无效「${priceStr}」`);
+
+    if(msgs.length){
+      errors.push({row:rowIdx,...r,"错误说明":msgs.join("；")});
+      return;
+    }
+
+    const obj={id:genId("D")};
+    // 复制用户填写的字段
+    ["业务归属公司","送货日期","商品名称","规格","单位","供货数量","成本单价","供货销售单价","发货件数","运费","运费小计","收货人","商超门店名称","备注"].forEach(f=>{
+      obj[f]=r[f]!==undefined?r[f]:"";
+    });
+    // 自动计算毛利
+    obj["单品毛利"]=(price-cost).toFixed(2);
+    obj["毛利合计"]=((price-cost)*qty).toFixed(2);
+    // 生成单据编号
+    const d=new Date(date+'T00:00:00');
+    const ymd=d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+    const seq=String(existing.length+valid.length+1).padStart(3,'0');
+    obj["单据编号"]="SH"+ymd+seq;
+    valid.push(obj);
+  });
+
+  if(errors.length){
+    // 生成错误报告 CSV 并下载
+    const errHeaders=["行号",...HEADERS.delivery.filter(h=>h!=="id"),"错误说明"];
+    const rows=[errHeaders].concat(errors.map(e=>errHeaders.map(h=>e[h]!==undefined?e[h]:"")));
+    downloadFile('送货单导入错误报告.csv',toCSV(rows),"text/csv;charset=utf-8");
+    showToast(`导入失败：${errors.length} 行数据有误，已下载错误报告`,"error");
+    return;
+  }
+
+  if(valid.length===0){
+    showToast("未检测到有效数据，请检查 CSV 内容","error");
+    return;
+  }
+
+  const merged=existing.concat(valid);
+  saveData(KEYS.delivery,merged);
+  showToast(`成功导入 ${valid.length} 条送货单`,"success");
   renderView(currentView);
 }
 
@@ -1374,9 +1470,9 @@ function deliveryHTML(){
         <span>送货单管理</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openDeliveryForm()">新增送货单</button>
-          <button class="btn btn-success" onclick="exportCSV('KEYS.delivery','送货单_${todayStr()}.csv',H('delivery'))">导出Excel</button>
-          <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.delivery}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('送货单导入模板.csv',H('delivery'))"">下载模板</button>
+          <button class="btn btn-success" onclick="exportCSV(KEYS.delivery,'送货单_${todayStr()}.csv',H('delivery'))">导出Excel</button>
+          <button class="btn btn-secondary" onclick="triggerImport(importDelivery)">导入Excel</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('送货单导入模板.csv',H('delivery'),['单据编号','id','单品毛利','毛利合计'])">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
@@ -1611,9 +1707,9 @@ function returnsHTML(){
         <span>退货单管理</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openReturnForm()">新增退货单</button>
-          <button class="btn btn-success" onclick="exportCSV('KEYS.returns','退货单_${todayStr()}.csv',H('returns'))">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV(KEYS.returns,'退货单_${todayStr()}.csv',H('returns'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.returns}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('退货单导入模板.csv',H('returns'))"">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('退货单导入模板.csv',H('returns'),['单据编号','id','退货毛利冲减'])">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
@@ -1658,7 +1754,7 @@ function openReturnForm(id){
     <div class="modal-body">
       <div class="form-grid">
         <div class="form-group"><label>单据编号 <span class="req">*</span></label><input type="text" id="f_单据编号" value="${escapeHtml(docNo)}" required></div>
-        <div class="form-group"><label>关联原送货单号</label><select id="f_关联原送货单号" onchange="autoFillFromDelivery(this)"><option value="">请选择原送货单</option>${delivery.map(d=>`<option value="${d["单据编号"]}" ${r&&r["关联原送货单号"]===d["单据编号"]?"selected":""}>${escapeHtml(d["单据编号"])} - ${escapeHtml(d["商品名称"]||"")} ${escapeHtml(d["商超门店名称"]||"")}</option>`).join("")}</select></div>
+        <div class="form-group"><label>关联原送货单号</label><select id="f_关联原送货单号" onchange="autoFillFromDelivery(this)"><option value=">请选择原送货单</option>${delivery.map(d=>`<option value="${d["单据编号"]}" ${r&&r["关联原送货单号"]===d["单据编号"]?"selected":""}>${escapeHtml(d["单据编号"])} - ${escapeHtml(d["商品名称"]||"")} ${escapeHtml(d["商超门店名称"]||"")}</option>`).join("")}</select></div>
         <div class="form-group"><label>业务归属公司 <span class="req">*</span></label><select id="f_业务归属公司">${COMPANIES.map(c=>`<option value="${c}" ${r&&r["业务归属公司"]===c?"selected":""}>${c}</option>`).join("")}</select></div>
         <div class="form-group"><label>退货日期 <span class="req">*</span></label><input type="date" id="f_退货日期" value="${r?r["退货日期"]:todayStr()}" required></div>
         <div class="form-group"><label>商品名称 <span class="req">*</span></label><input type="text" id="f_商品名称" value="${escapeHtml(r?r["商品名称"]:"")}" required></div>
@@ -1721,13 +1817,13 @@ function productsHTML(){
         <span>商品基础档案</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openProductForm()">新增商品</button>
-          <button class="btn btn-success" onclick="exportCSV('KEYS.products','商品档案_${todayStr()}.csv',H('products'))">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV(KEYS.products,'商品档案_${todayStr()}.csv',H('products'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.products}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('商品档案导入模板.csv',H('products'))"">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('商品档案导入模板.csv',H('products'),['id'])">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
-        <label>分类:</label><select id="pCat" onchange="renderProducts()"><option value="">全部</option>${CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
+        <label>分类:</label><select id="pCat" onchange="renderProducts()"><option value=">全部</option>${CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
         <label>搜索:</label><input type="text" id="pSearch" placeholder="商品名称" oninput="renderProducts()" style="width:120px">
       </div>
       <div id="productsTable"></div>
@@ -1806,13 +1902,13 @@ function settlementHTML(){
         <span>甲方结算 & 发票管理</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openSettlementForm()">新增结算</button>
-          <button class="btn btn-success" onclick="exportCSV('KEYS.settlement','结算发票_${todayStr()}.csv',H('settlement'))">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV(KEYS.settlement,'结算发票_${todayStr()}.csv',H('settlement'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.settlement}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('结算发票导入模板.csv',H('settlement'))"">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('结算发票导入模板.csv',H('settlement'),['id','未开票金额','待结算余额'])">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
-        <label>状态:</label><select id="sStatus" onchange="renderSettlement()"><option value="">全部</option>${SETTLE_STATUS.map(s=>`<option value="${s}">${s}</option>`).join("")}</select>
+        <label>状态:</label><select id="sStatus" onchange="renderSettlement()"><option value=">全部</option>${SETTLE_STATUS.map(s=>`<option value="${s}">${s}</option>`).join("")}</select>
         <label>周期:</label><input type="text" id="sPeriod" placeholder="如 2026-07" oninput="renderSettlement()" style="width:100px">
       </div>
       <div id="settlementTable"></div>
@@ -1944,13 +2040,13 @@ function retailHTML(){
         <span>零售业务台账（线上零售 + 礼盒配送）</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openRetailForm()">新增订单</button>
-          <button class="btn btn-success" onclick="exportCSV('KEYS.retail','零售台账_${todayStr()}.csv',H('retail'))">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV(KEYS.retail,'零售台账_${todayStr()}.csv',H('retail'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.retail}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('零售台账导入模板.csv',H('retail'))"">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('零售台账导入模板.csv',H('retail'),['id','毛利'])">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
-        <label>业务类型:</label><select id="rtType" onchange="renderRetail()"><option value="">全部</option>${RETAIL_TYPES.map(t=>`<option value="${t}">${t}</option>`).join("")}</select>
+        <label>业务类型:</label><select id="rtType" onchange="renderRetail()"><option value=">全部</option>${RETAIL_TYPES.map(t=>`<option value="${t}">${t}</option>`).join("")}</select>
         <label>日期从:</label><input type="date" id="rtFrom" onchange="renderRetail()">
         <label>到:</label><input type="date" id="rtTo" onchange="renderRetail()">
       </div>
@@ -2119,9 +2215,9 @@ function attendanceHTML(){
       </div>
       <div class="sheet-toolbar">
         <button class="btn btn-primary" onclick="openEmployeeForm()">新增员工</button>
-        <button class="btn btn-success" onclick="exportCSV('KEYS.attendance','考勤记录_${todayStr()}.csv',H('attendance'))">导出Excel</button>
+        <button class="btn btn-success" onclick="exportCSV(KEYS.attendance,'考勤记录_${todayStr()}.csv',H('attendance'))">导出Excel</button>
         <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.attendance}',r))">导入Excel</button>
-        <button class="btn btn-outline" onclick="downloadTemplate('考勤导入模板.csv',H('attendance'))"">下载模板</button>
+        <button class="btn btn-outline" onclick="downloadTemplate('考勤导入模板.csv',H('attendance'),['id'])">下载模板</button>
         <span class="tool-label" style="margin-left:auto">点击日期单元格可直接登记/修改考勤状态</span>
       </div>
       <div id="attendanceTable"></div>
@@ -2361,9 +2457,9 @@ function salaryHTML(){
         <span>薪资核算台账</span>
         <div class="toolbar" style="margin:0">
           <button class="btn btn-primary" onclick="openSalaryForm()">新增薪资</button>
-          <button class="btn btn-success" onclick="exportCSV('KEYS.salary','薪资台账_${todayStr()}.csv',H('salary'))">导出Excel</button>
+          <button class="btn btn-success" onclick="exportCSV(KEYS.salary,'薪资台账_${todayStr()}.csv',H('salary'))">导出Excel</button>
           <button class="btn btn-secondary" onclick="triggerImport(r=>importData('${KEYS.salary}',r))">导入Excel</button>
-          <button class="btn btn-outline" onclick="downloadTemplate('薪资台账导入模板.csv',H('salary'))"">下载模板</button>
+          <button class="btn btn-outline" onclick="downloadTemplate('薪资台账导入模板.csv',H('salary'),['id','应发工资'])">下载模板</button>
         </div>
       </div>
       <div class="filter-bar">
@@ -2447,7 +2543,7 @@ function reportsHTML(){
       <div class="filter-bar">
         <label>时间从:</label><input type="date" id="rpFrom" onchange="renderReports()">
         <label>到:</label><input type="date" id="rpTo" onchange="renderReports()">
-        <label>主体公司:</label><select id="rpCompany" onchange="renderReports()"><option value="">跟随全局</option>${COMPANIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
+        <label>主体公司:</label><select id="rpCompany" onchange="renderReports()"><option value=">跟随全局</option>${COMPANIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
         <label>商品:</label><input type="text" id="rpProd" placeholder="商品名称" oninput="renderReports()" style="width:100px">
         <label>汇总:</label><select id="rpMode" onchange="renderReports()"><option value="monthly">月度汇总</option><option value="yearly">年度汇总</option></select>
       </div>
