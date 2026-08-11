@@ -1112,43 +1112,47 @@ function renderDashboard(){
   `;
   $("#dashKpi").innerHTML=kpiHtml;
 
-  // Charts
+  // Charts: 近12月 总部/电力/建设/伊宁/北屯/零售 销售折线
   const now=new Date();
   const months=[];
-  for(let i=5;i>=0;i--){
+  for(let i=11;i>=0;i--){
     const d=new Date(now.getFullYear(),now.getMonth()-i,1);
     months.push(d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"));
   }
-  const trendData=months.map(m=>{
-    const fd=getFiltered(delivery,"业务归属公司").filter(d=>(d["送货日期"]||"").startsWith(m));
-    const fr=getFiltered(loadData(KEYS.returns),"业务归属公司").filter(r=>(r["退货日期"]||"").startsWith(m));
-    const fret=getFiltered(loadData(KEYS.retail),"业务归属公司").filter(r=>(r["订单日期"]||"").startsWith(m));
-    let rev=0,prof=0;
-    fd.forEach(d=>{rev+=Number(d["供货销售单价"]||0)*Number(d["供货数量"]||0);prof+=Number(d["毛利合计"]||0)});
-    fr.forEach(r=>{rev-=Number(r["销售单价"]||0)*Number(r["退货数量"]||0);prof-=Number(r["退货毛利冲减"]||0)});
-    fret.forEach(r=>{rev+=Number(r["销售额"]||0);prof+=Number(r["毛利"]||0)});
-    return{month:m,rev:rev,prof:prof};
+  const companyMap={
+    "总部":"水发智慧服务有限公司（总部）",
+    "电力":"水发智慧服务电力有限公司",
+    "建设":"水发智慧服务建设有限公司",
+    "伊宁":"水发智慧服务有限公司伊宁市分公司",
+    "北屯":"水发智慧服务有限公司北屯市分公司"
+  };
+  const series=[
+    {label:"总部",color:"#2563eb",values:[]},
+    {label:"电力",color:"#16a34a",values:[]},
+    {label:"建设",color:"#f59e0b",values:[]},
+    {label:"伊宁",color:"#8b5cf6",values:[]},
+    {label:"北屯",color:"#ec4899",values:[]},
+    {label:"零售",color:"#06b6d4",values:[]}
+  ];
+  const allReturns=loadData(KEYS.returns);
+  months.forEach(m=>{
+    series.forEach(s=>{
+      if(s.label==="零售"){
+        const rev=loadData(KEYS.retail).filter(r=>(r["订单日期"]||"").startsWith(m)).reduce((sum,r)=>sum+Number(r["销售额"]||0),0);
+        s.values.push(rev);
+      }else{
+        const co=companyMap[s.label];
+        const fd=delivery.filter(d=>d["业务归属公司"]===co && (d["送货日期"]||"").startsWith(m));
+        const fr=allReturns.filter(r=>r["业务归属公司"]===co && (r["退货日期"]||"").startsWith(m));
+        const rev=fd.reduce((sum,d)=>sum+Number(d["供货销售单价"]||0)*Number(d["供货数量"]||0),0)
+                 - fr.reduce((sum,r)=>sum+Number(r["销售单价"]||0)*Number(r["退货数量"]||0),0);
+        s.values.push(rev);
+      }
+    });
   });
-  const fCats=company==="all"?COMPANIES:[company];
-  const busData=[];
-  // 商超供货
-  let supRev=0,supProf=0;
-  getFiltered(delivery,"业务归属公司").forEach(d=>{supRev+=Number(d["供货销售单价"]||0)*Number(d["供货数量"]||0);supProf+=Number(d["毛利合计"]||0)});
-  getFiltered(loadData(KEYS.returns),"业务归属公司").forEach(r=>{supRev-=Number(r["销售单价"]||0)*Number(r["退货数量"]||0);supProf-=Number(r["退货毛利冲减"]||0)});
-  // 线上零售
-  let onRev=0,onProf=0;
-  getFiltered(loadData(KEYS.retail),"业务归属公司").filter(r=>r["业务类型"]==="线上零售").forEach(r=>{onRev+=Number(r["销售额"]||0);onProf+=Number(r["毛利"]||0)});
-  // 礼盒
-  let gbRev=0,gbProf=0;
-  getFiltered(loadData(KEYS.retail),"业务归属公司").filter(r=>r["业务类型"]==="节假日礼盒配送").forEach(r=>{gbRev+=Number(r["销售额"]||0);gbProf+=Number(r["毛利"]||0)});
 
   $("#dashCharts").innerHTML=`
-    <div class="chart-card"><h3>近6月营收毛利趋势</h3>${svgLineChart(trendData,320,180)}</div>
-    <div class="chart-card"><h3>三大业务板块营收占比</h3>${svgDonut([
-      {label:"商超供货",val:supRev,color:"#2563eb"},
-      {label:"线上零售",val:onRev,color:"#16a34a"},
-      {label:"礼盒配送",val:gbRev,color:"#f59e0b"}
-    ],240,160)}</div>
+    <div class="chart-card" style="grid-column:1/-1"><h3>近12月销售趋势</h3>${svgMultiLineChart(months,series,680,260)}</div>
   `;
 
   // Company table
@@ -2754,6 +2758,44 @@ function svgDonut(data,w,h){
   const centerText=`<text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="10" fill="#64748b">合计</text><text x="${cx}" y="${cy+18}" text-anchor="middle" font-size="11" font-weight="700" fill="#1e293b">¥${fmtMoney(total)}</text>`;
   return `<svg viewBox="0 0 ${w} ${h}" class="chart-svg" xmlns="http://www.w3.org/2000/svg">${paths}${labels}${centerText}${legend}</svg>`;
 }
+/* 多线折线图：series=[{label,color,values:[...]},...], labels=X轴月份 */
+function svgMultiLineChart(labels,series,w,h){
+  const padL=50,padR=15,padT=20,padB=50;
+  const cw=w-padL-padR,ch=h-padT-padB;
+  if(!labels||labels.length===0||!series||series.length===0)return '<div class="empty-state">暂无数据</div>';
+  const flat=series.flatMap(s=>s.values||[]);
+  const maxV=Math.max(...flat,1);
+  const minV=Math.min(...flat,0);
+  const range=maxV-minV||1;
+  const stepX=labels.length>1?cw/(labels.length-1):cw;
+  const scaleY=v=>padT+ch-((v-minV)/range)*ch;
+  const scaleX=i=>padL+i*stepX;
+  let gridLines="";
+  for(let i=0;i<=4;i++){
+    const y=padT+(ch/4)*i;
+    const val=maxV-(range/4)*i;
+    gridLines+=`<line x1="${padL}" y1="${y}" x2="${w-padR}" y2="${y}" stroke="#e2e8f0" stroke-width="1"/>`;
+    gridLines+=`<text x="${padL-5}" y="${y+4}" text-anchor="end" font-size="10" fill="#94a3b8">${val>=1000?(val/1000).toFixed(1)+"k":val.toFixed(0)}</text>`;
+  }
+  const xLabels=labels.map((m,i)=>`<text x="${scaleX(i)}" y="${h-10}" text-anchor="middle" font-size="10" fill="#64748b">${m}</text>`).join("");
+  const colors=["#2563eb","#16a34a","#f59e0b","#8b5cf6","#ec4899","#06b6d4","#ef4444","#84cc16"];
+  let lines="",dots="";
+  series.forEach((s,si)=>{
+    const color=s.color||colors[si%colors.length];
+    const pts=(s.values||[]).map((v,i)=>`${scaleX(i)},${scaleY(v)}`).join(" ");
+    lines+=`<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2"/>`;
+    (s.values||[]).forEach((v,i)=>{dots+=`<circle cx="${scaleX(i)}" cy="${scaleY(v)}" r="2.5" fill="${color}"/>`;});
+  });
+  // 左上角图例
+  let legend="";
+  series.forEach((s,si)=>{
+    const color=s.color||colors[si%colors.length];
+    const lx=padL, ly=padT+si*14;
+    legend+=`<rect x="${lx}" y="${ly-6}" width="10" height="3" fill="${color}"/><text x="${lx+14}" y="${ly}" font-size="10" fill="#475569">${s.label}</text>`;
+  });
+  return `<svg viewBox="0 0 ${w} ${h}" class="chart-svg" xmlns="http://www.w3.org/2000/svg">${gridLines}${lines}${dots}${xLabels}${legend}</svg>`;
+}
+
 function svgBarChart(data,w,h){
   const padL=50,padR=15,padT=20,padB=50;
   const cw=w-padL-padR,ch=h-padT-padB;
