@@ -1112,12 +1112,10 @@ function renderDashboard(){
   `;
   $("#dashKpi").innerHTML=kpiHtml;
 
-  // Charts: 近12月 总部/电力/建设/伊宁/北屯/零售 销售折线
-  const now=new Date();
+  // Charts: 2026年 总部/电力/建设/伊宁/北屯/零售 销售折线
   const months=[];
-  for(let i=11;i>=0;i--){
-    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    months.push(d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"));
+  for(let i=1;i<=12;i++){
+    months.push("2026-"+String(i).padStart(2,"0"));
   }
   const companyMap={
     "总部":"水发智慧服务有限公司（总部）",
@@ -1152,7 +1150,7 @@ function renderDashboard(){
   });
 
   $("#dashCharts").innerHTML=`
-    <div class="chart-card" style="grid-column:1/-1"><h3>近12月销售趋势</h3>${svgMultiLineChart(months,series,680,260)}</div>
+    <div class="chart-card" style="grid-column:1/-1"><h3>2026年销售趋势（1.1 - 12.30）</h3>${svgMultiLineChart(months,series,680,260)}</div>
   `;
 
   // Company table
@@ -1758,7 +1756,7 @@ function openReturnForm(id){
     <div class="modal-body">
       <div class="form-grid">
         <div class="form-group"><label>单据编号 <span class="req">*</span></label><input type="text" id="f_单据编号" value="${escapeHtml(docNo)}" required></div>
-        <div class="form-group"><label>关联原送货单号</label><select id="f_关联原送货单号" onchange="autoFillFromDelivery(this)"><option value=">请选择原送货单</option>${delivery.map(d=>`<option value="${d["单据编号"]}" ${r&&r["关联原送货单号"]===d["单据编号"]?"selected":""}>${escapeHtml(d["单据编号"])} - ${escapeHtml(d["商品名称"]||"")} ${escapeHtml(d["商超门店名称"]||"")}</option>`).join("")}</select></div>
+        <div class="form-group"><label>关联原送货单号</label><select id="f_关联原送货单号" onchange="autoFillFromDelivery(this)"><option value="">请选择原送货单</option>${delivery.map(d=>`<option value="${d["单据编号"]}" ${r&&r["关联原送货单号"]===d["单据编号"]?"selected":""}>${escapeHtml(d["单据编号"])} - ${escapeHtml(d["商品名称"]||"")} ${escapeHtml(d["商超门店名称"]||"")}</option>`).join("")}</select></div>
         <div class="form-group"><label>业务归属公司 <span class="req">*</span></label><select id="f_业务归属公司">${COMPANIES.map(c=>`<option value="${c}" ${r&&r["业务归属公司"]===c?"selected":""}>${c}</option>`).join("")}</select></div>
         <div class="form-group"><label>退货日期 <span class="req">*</span></label><input type="date" id="f_退货日期" value="${r?r["退货日期"]:todayStr()}" required></div>
         <div class="form-group"><label>商品名称 <span class="req">*</span></label><input type="text" id="f_商品名称" value="${escapeHtml(r?r["商品名称"]:"")}" required></div>
@@ -1827,7 +1825,7 @@ function productsHTML(){
         </div>
       </div>
       <div class="filter-bar">
-        <label>分类:</label><select id="pCat" onchange="renderProducts()"><option value=">全部</option>${CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
+        <label>分类:</label><select id="pCat" onchange="renderProducts()"><option value="">全部</option>${CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
         <label>搜索:</label><input type="text" id="pSearch" placeholder="商品名称" oninput="renderProducts()" style="width:120px">
       </div>
       <div id="productsTable"></div>
@@ -1912,7 +1910,7 @@ function settlementHTML(){
         </div>
       </div>
       <div class="filter-bar">
-        <label>状态:</label><select id="sStatus" onchange="renderSettlement()"><option value=">全部</option>${SETTLE_STATUS.map(s=>`<option value="${s}">${s}</option>`).join("")}</select>
+        <label>状态:</label><select id="sStatus" onchange="renderSettlement()"><option value="">全部</option>${SETTLE_STATUS.map(s=>`<option value="${s}">${s}</option>`).join("")}</select>
         <label>周期:</label><input type="text" id="sPeriod" placeholder="如 2026-07" oninput="renderSettlement()" style="width:100px">
       </div>
       <div id="settlementTable"></div>
@@ -2050,7 +2048,7 @@ function retailHTML(){
         </div>
       </div>
       <div class="filter-bar">
-        <label>业务类型:</label><select id="rtType" onchange="renderRetail()"><option value=">全部</option>${RETAIL_TYPES.map(t=>`<option value="${t}">${t}</option>`).join("")}</select>
+        <label>业务类型:</label><select id="rtType" onchange="renderRetail()"><option value="">全部</option>${RETAIL_TYPES.map(t=>`<option value="${t}">${t}</option>`).join("")}</select>
         <label>日期从:</label><input type="date" id="rtFrom" onchange="renderRetail()">
         <label>到:</label><input type="date" id="rtTo" onchange="renderRetail()">
       </div>
@@ -2547,7 +2545,7 @@ function reportsHTML(){
       <div class="filter-bar">
         <label>时间从:</label><input type="date" id="rpFrom" onchange="renderReports()">
         <label>到:</label><input type="date" id="rpTo" onchange="renderReports()">
-        <label>主体公司:</label><select id="rpCompany" onchange="renderReports()"><option value=">跟随全局</option>${COMPANIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
+        <label>主体公司:</label><select id="rpCompany" onchange="renderReports()"><option value="">跟随全局</option>${COMPANIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select>
         <label>商品:</label><input type="text" id="rpProd" placeholder="商品名称" oninput="renderReports()" style="width:100px">
         <label>汇总:</label><select id="rpMode" onchange="renderReports()"><option value="monthly">月度汇总</option><option value="yearly">年度汇总</option></select>
       </div>
