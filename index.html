@@ -460,9 +460,11 @@ function updateStorageUsageDebounced(){if(_usageTimer)clearTimeout(_usageTimer);
 
 /* ====== 云同步（Supabase，加密存储，零外部依赖） ====== */
 const CLOUD_KEY="wb_erp_cloudsync";
-const SUPABASE_URL="https://gramwlpss1kglreqnuek.supabase.co";
+const SUPABASE_URL="https://gramwlpsslkglreqnuek.supabase.co";
 const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdyYW13bHBzc2xrZ2xyZXFudWVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2NTg1MDYsImV4cCI6MjEwMTIzNDUwNn0.cmxoxJePim7JZmbH4oBqaT4BcH-2nc3WsQXVo9wGRYY";
-function getCloudCfg(){try{let c=JSON.parse(localStorage.getItem(CLOUD_KEY)||"null");if(!c)c={};if(!c.url)c.url=SUPABASE_URL;if(!c.anonKey)c.anonKey=SUPABASE_ANON_KEY;return c;}catch(e){return {url:SUPABASE_URL,anonKey:SUPABASE_ANON_KEY};}}
+function getCloudCfg(){try{let c=JSON.parse(localStorage.getItem(CLOUD_KEY)||"null");if(!c)c={};if(!c.url)c.url=SUPABASE_URL;if(!c.anonKey)c.anonKey=SUPABASE_ANON_KEY;/* 自动迁移：旧项目 ref gramwlpss1kglreqnuek 已失效，统一替换为新 ref gramwlpsslkglreqnuek */
+  if(c.url&&c.url.indexOf("gramwlpss1kglreqnuek")>=0){c.url=c.url.replace("gramwlpss1kglreqnuek","gramwlpsslkglreqnuek");try{localStorage.setItem(CLOUD_KEY,JSON.stringify(c));}catch(e){}}
+  return c;}catch(e){return {url:SUPABASE_URL,anonKey:SUPABASE_ANON_KEY};}}
 function setCloudCfg(c){localStorage.setItem(CLOUD_KEY,JSON.stringify(c));}
 function updateCloudStatus(txt,ok){const el=$("#cloudStatus");if(el){el.textContent=txt;el.style.color=ok?"#4ade80":(txt==="同步失败"?"#f87171":"#facc15");}}
 let _cloudTimer=null;
@@ -596,9 +598,97 @@ async function initCloudSync(){
   const cfg=getCloudCfg();
   if(!cfg||!cfg.enabled)return;
   /* 先拉取判断云端是否有更新；再用本地最新状态推送，避免空云端覆盖本地 */
-  try{ await pullFromCloud(); }catch(e){ console.warn("init pull 失败",e); updateCloudStatus("拉取失败",false); }
-  try{ await pushToCloud(); }catch(e){ console.warn("init push 失败",e); updateCloudStatus("同步失败: "+e.message,false); return; }
+  try{ await pullFromCloud(); }catch(e){ console.warn("init pull 失败",e); updateCloudStatus("拉取失败: "+(e.message||e),false); }
+  try{ await pushToCloud(); }catch(e){ console.warn("init push 失败",e); updateCloudStatus("同步失败: "+(e.message||e),false); return; }
   updateCloudStatus("已同步",true);
+}
+
+/* 网络诊断：逐步检测云同步链路每一步是否通畅 */
+async function testCloudConnection(){
+  const cfg=getCloudCfg();
+  const resultEl=$("#cloudDiagResult");
+  if(resultEl)resultEl.innerHTML='<span style="color:#f59e0b">⏳ 正在检测，请稍候...</span>';
+  const steps=[];
+  const log=(ok,msg)=>{steps.push({ok,msg});};
+  
+  // Step 1: 配置检查
+  if(!cfg||!cfg.url){log(false,"❌ 未配置 Supabase URL");showResult();return;}
+  if(!cfg.anonKey){log(false,"❌ 未配置 anon key");showResult();return;}
+  if(!cfg.passphrase){log(false,"❌ 未设置同步口令");showResult();return;}
+  if(!currentUser){log(false,"❌ 未登录（需要先设用户名）");showResult();return;}
+  log(true,"✅ 配置完整（URL / anonKey / 口令 / 用户名）");
+
+  // Step 2: DNS / 网络连通性
+  try{
+    const t0=Date.now();
+    const baseRes=await fetch(cfg.url.replace(/\/$/,"")+"/rest/v1/",{
+      headers:{"apikey":cfg.anonKey},
+      mode:"cors",
+      cache:"no-store"
+    });
+    const ms=Date.now()-t0;
+    if(baseRes.ok)log(true,"✅ 网络可达，Supabase 响应正常 ("+ms+"ms)");
+    else if(baseRes.status===401)log(true,"✅ 网络可达，但 anon key 无效 (401)");
+    else log(false,"⚠️ Supabase 返回 HTTP "+baseRes.status);
+  }catch(e){
+    log(false,"❌ 网络不可达: "+(e.message||String(e)));
+    log(false,"   可能原因：①Supabase 免费项目被暂停（7天无活动自动暂停）");
+    log(false,"              ②本地防火墙/代理/VPN 屏蔽了 supabase.co");
+    log(false,"              ③DNS 解析失败 → 尝试换 DNS 或检查网络");
+    showResult();return;
+  }
+
+  // Step 3: 表是否存在
+  try{
+    const checkUrl=cfg.url.replace(/\/$/,"")+"/rest/v1/erp_data?limit=0&select=id";
+    const cr=await fetch(checkUrl,{headers:{"apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey}});
+    if(cr.ok)log(true,"✅ erp_data 表存在且有读取权限");
+    else if(cr.status===404 || cr.status===406){
+      log(false,"⚠️ erp_data 表不存在或无权限 (HTTP "+cr.status+")");
+      log(false,"   解决：去 Supabase 控制台 → SQL Editor 执行建表 SQL");
+    }else{
+      const txt=(await cr.text()).slice(0,150);
+      log(false,"⚠️ 检查表时返回 HTTP "+cr.status+": "+txt);
+    }
+  }catch(e){
+    log(false,"❌ 检查表异常: "+(e.message||String(e)));
+  }
+
+  // Step 4: 写入权限
+  try{
+    const testUrl=cfg.url.replace(/\/$/,"")+"/rest/v1/erp_data";
+    const wr=await fetch(testUrl,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey,"Prefer":"resolution=merge-duplicates"},
+      body:JSON.stringify({id:"__diag_test__"+Date.now(),payload:{_test:true},updated_at:new Date().toISOString()})
+    });
+    if(wr.ok||wr.status===201||wr.status===204||wr.status===409){
+      log(true,"✅ 写入权限正常");
+      // 清理测试数据
+      try{await fetch(testUrl+"/__diag_test__",{method:"DELETE",headers:{"apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey}});}catch(_e){}
+    }else{
+      const txt=(await wr.text()).slice(0,150);
+      log(false,"⚠️ 写入测试失败 HTTP "+wr.status+": "+txt);
+    }
+  }catch(e){
+    log(false,"❌ 写入权限检测异常: "+(e.message||String(e)));
+  }
+
+  function showResult(){
+    if(!resultEl)return;
+    let html='<div style="margin-top:8px;line-height:1.8;font-size:12px">';
+    steps.forEach(s=>{
+      html+='<div style="color:'+(s.ok?'#16a34a':'#dc2626')+'">'+s.msg+'</div>';
+    });
+    html+='</div>';
+    if(!steps.some(s=>!s.ok)){
+      html+='<div style="color:#16a34a;margin-top:6px;font-weight:bold">🎉 所有检测通过！如果仍然同步失败，请点「立即上传到云端」重试。</div>';
+    }else{
+      html+='<div style="color:#f59e0b;margin-top:6px">💡 请根据上方红色/黄色提示逐一排查。</div>';
+    }
+    resultEl.innerHTML=html;
+  }
+  showResult();
 }
 function openCloudSync(){
   const cfg=getCloudCfg()||{};
@@ -618,11 +708,19 @@ function openCloudSync(){
         <button class="btn btn-primary" onclick="saveCloudCfg()">保存配置</button>
         <button class="btn btn-outline" onclick="manualPush()">立即上传到云端</button>
         <button class="btn btn-outline" onclick="manualPull()">从云端拉取</button>
+        <button class="btn btn-outline" style="color:#f59e0b;border-color:#f59e0b" onclick="testCloudConnection()">🔍 网络诊断</button>
       </div>
+      <div id="cloudDiagResult" style="margin-top:8px"></div>
       <p style="font-size:11px;color:#64748b;margin-top:10px">首次启用：先在本机录入/确认数据，点「立即上传到云端」推上去；其他设备启用同步后打开会自动拉取。</p>
-      <details style="font-size:11px;color:#94a3b8;margin-top:6px"><summary style="cursor:pointer;color:#f59e0b">同步失败？点击查看解决方法</summary>
+      <details style="font-size:11px;color:#94a3b8;margin-top:6px" open><summary style="cursor:pointer;color:#f59e0b">❓ 同步失败？点击查看解决方法</summary>
       <div style="margin-top:6px;line-height:1.6">
-        若提示「relation "erp_data" does not exist」或 404 错误，需在 Supabase 控制台执行以下 SQL：<br>
+        <strong style="color:#f87171">最常见原因（按概率排序）：</strong><br><br>
+        <b>① Supabase 项目 ref 变更</b> — 项目引用 ID 已从 <code>gramwlpss1kglreqnuek</code> 变更为 <code>gramwlpsslkglreqnuek</code>，旧地址已失效。<br>
+        &nbsp;&nbsp;解决：本版已自动更新地址，按 Ctrl+F5 强制刷新后重试即可。<br><br>
+        <b>② 本地网络无法访问 supabase.co</b> — 公司防火墙、代理或 VPN 可能屏蔽了外网。<br>
+        &nbsp;&nbsp;解决：用手机热点试试，如果手机能同步说明是公司网络问题。<br><br>
+        <b>③ erp_data 表不存在</b> — 首次使用需手动建表。<br>
+        &nbsp;&nbsp;操作路径：Supabase 控制台 → SQL Editor → 新建查询 → 粘贴下方 SQL → Run<br>
         <code style="display:block;background:#f1f5f9;padding:6px;margin:4px 0;font-size:10px;white-space:pre-wrap;word-break:break-all">CREATE TABLE IF NOT EXISTS erp_data (
   id TEXT PRIMARY KEY,
   payload JSONB NOT NULL DEFAULT '{}',
@@ -630,7 +728,7 @@ function openCloudSync(){
 );
 ALTER TABLE erp_data ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow anon full access" ON erp_data FOR ALL USING (true) WITH CHECK (true);</code><br>
-        操作路径：Supabase 控制台 → SQL Editor → 新建查询 → 粘贴上方 SQL → Run
+        <b>💡 快速排查：</b>点上方「🔍 网络诊断」按钮，自动检测每一步是否通畅。
       </div></details>
     </div>
   `);
