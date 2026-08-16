@@ -511,6 +511,33 @@ function hasRealData(){
   }
   return false;
 }
+async function ensureTableExists(cfg){
+  /* 尝试通过 /rest/v1/rpc 执行 SQL 创建表（需在 Supabase SQL Editor 中预先创建 exec_sql 函数） */
+  /* 如果表已存在则直接返回 true；若无法确认也返回 true 让后续 push/pull 报真实错误 */
+  try{
+    const checkUrl=cfg.url.replace(/\/$/,"")+"/rest/v1/erp_data?limit=0&select=id";
+    const cr=await fetch(checkUrl,{headers:{"apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey}});
+    if(cr.ok)return true; /* 表存在且有权限 */
+    /* 如果返回 404 或 42P01 (relation does not exist)，说明表不存在 */
+    if(cr.status===404 || (await cr.text()).includes("does not exist")){
+      console.warn("[云同步] erp_data 表不存在，尝试创建...");
+      /* 尝试用 rpc 调用创建表 */
+      const rpcUrl=cfg.url.replace(/\/$/,"")+"/rest/v1/rpc/exec_sql";
+      const sql=`CREATE TABLE IF NOT EXISTS erp_data (
+        id TEXT PRIMARY KEY,
+        payload JSONB NOT NULL DEFAULT '{}',
+        updated_at TIMESTAMPTZ DEFAULT now()
+      );
+      ALTER TABLE erp_data ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY "Allow anon full access" ON erp_data FOR ALL USING (true) WITH CHECK (true);`;
+      const rr=await fetch(rpcUrl,{method:"POST",headers:{"Content-Type":"application/json","apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey},body:JSON.stringify({sql_string:sql})});
+      if(rr.ok){showToast("云端数据表已自动创建","success");return true;}
+      console.warn("[云同步] 自动建表失败",await rr.text());
+    }
+  }catch(e){console.warn("[云同步] 检查表是否存在时异常",e);}
+  return false;
+}
+
 async function pushToCloud(){
   const cfg=getCloudCfg();
   if(!cfg||!cfg.enabled||!cfg.url||!cfg.anonKey||!cfg.passphrase||!currentUser)return;
@@ -519,10 +546,12 @@ async function pushToCloud(){
     updateCloudStatus("本地仅示例数据",false);
     return;
   }
+  /* 先确保表存在 */
+  await ensureTableExists(cfg);
   const payload=await cryptoEncrypt(await collectCloudData(),cfg.passphrase);
   const url=cfg.url.replace(/\/$/,"")+"/rest/v1/erp_data";
   const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey,"Prefer":"resolution=merge-duplicates"},body:JSON.stringify({id:"main::"+currentUser,payload,updated_at:new Date().toISOString()})});
-  if(!res.ok){const t=await res.text();throw new Error("push "+res.status+" "+t);}
+  if(!res.ok){const t=await res.text();throw new Error("上传失败("+res.status+"): "+t.slice(0,200));}
   const now=Date.now();
   setFlag("wb_erp_lastpush",now);
   setFlag("wb_erp_local_changed_at",now);
@@ -532,7 +561,7 @@ async function pullFromCloud(){
   if(!cfg||!cfg.enabled||!cfg.url||!cfg.anonKey||!cfg.passphrase||!currentUser)return;
   const url=cfg.url.replace(/\/$/,"")+"/rest/v1/erp_data?id=eq.main%3A%3A"+encodeURIComponent(currentUser)+"&select=payload,updated_at";
   const res=await fetch(url,{headers:{"apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey}});
-  if(!res.ok)throw new Error("pull "+res.status);
+  if(!res.ok){const t=await res.text();throw new Error("拉取失败("+res.status+"): "+t.slice(0,200));}
   const rows=await res.json();
   if(!rows||!rows.length)return;
   const obj=await cryptoDecrypt(rows[0].payload,cfg.passphrase);
@@ -567,8 +596,8 @@ async function initCloudSync(){
   const cfg=getCloudCfg();
   if(!cfg||!cfg.enabled)return;
   /* 先拉取判断云端是否有更新；再用本地最新状态推送，避免空云端覆盖本地 */
-  try{ await pullFromCloud(); }catch(e){ console.warn("init pull 失败",e); }
-  try{ await pushToCloud(); }catch(e){ console.warn("init push 失败",e); updateCloudStatus("同步失败"); return; }
+  try{ await pullFromCloud(); }catch(e){ console.warn("init pull 失败",e); updateCloudStatus("拉取失败",false); }
+  try{ await pushToCloud(); }catch(e){ console.warn("init push 失败",e); updateCloudStatus("同步失败: "+e.message,false); return; }
   updateCloudStatus("已同步",true);
 }
 function openCloudSync(){
@@ -591,6 +620,18 @@ function openCloudSync(){
         <button class="btn btn-outline" onclick="manualPull()">从云端拉取</button>
       </div>
       <p style="font-size:11px;color:#64748b;margin-top:10px">首次启用：先在本机录入/确认数据，点「立即上传到云端」推上去；其他设备启用同步后打开会自动拉取。</p>
+      <details style="font-size:11px;color:#94a3b8;margin-top:6px"><summary style="cursor:pointer;color:#f59e0b">同步失败？点击查看解决方法</summary>
+      <div style="margin-top:6px;line-height:1.6">
+        若提示「relation "erp_data" does not exist」或 404 错误，需在 Supabase 控制台执行以下 SQL：<br>
+        <code style="display:block;background:#f1f5f9;padding:6px;margin:4px 0;font-size:10px;white-space:pre-wrap;word-break:break-all">CREATE TABLE IF NOT EXISTS erp_data (
+  id TEXT PRIMARY KEY,
+  payload JSONB NOT NULL DEFAULT '{}',
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE erp_data ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow anon full access" ON erp_data FOR ALL USING (true) WITH CHECK (true);</code><br>
+        操作路径：Supabase 控制台 → SQL Editor → 新建查询 → 粘贴上方 SQL → Run
+      </div></details>
     </div>
   `);
 }
@@ -603,8 +644,38 @@ function saveCloudCfg(){
   closeModal();
   if(cfg.enabled){ initCloudSync().then(()=>renderView(currentView)).catch(e=>{console.warn(e);showToast("拉取失败，检查配置","error");}); }
 }
-async function manualPush(){ try{ await pushToCloud(); updateCloudStatus("已同步",true); showToast("已上传到云端","success"); }catch(e){ console.warn(e); showToast("上传失败："+e.message,"error"); } }
-async function manualPull(){ try{ await pullFromCloud(); updateCloudStatus("已同步",true); showToast("已从云端拉取","success"); renderView(currentView); }catch(e){ console.warn(e); showToast("拉取失败："+e.message,"error"); } }
+async function manualPush(){
+  try{
+    const cfg=getCloudCfg();
+    if(!cfg||!cfg.passphrase){showToast("请先填写同步口令","error");return;}
+    if(!currentUser){showToast("请先登录","error");return;}
+    await ensureTableExists(cfg);
+    await pushToCloud();
+    updateCloudStatus("已同步",true);
+    showToast("已上传到云端","success");
+  }catch(e){
+    console.warn(e);
+    const msg=e.message||String(e);
+    showToast("上传失败："+msg,"error");
+    updateCloudStatus("同步失败: "+msg,false);
+  }
+}
+async function manualPull(){
+  try{
+    const cfg=getCloudCfg();
+    if(!cfg||!cfg.passphrase){showToast("请先填写同步口令","error");return;}
+    if(!currentUser){showToast("请先登录","error");return;}
+    await pullFromCloud();
+    updateCloudStatus("已同步",true);
+    showToast("已从云端拉取","success");
+    renderView(currentView);
+  }catch(e){
+    console.warn(e);
+    const msg=e.message||String(e);
+    showToast("拉取失败："+msg,"error");
+    updateCloudStatus("同步失败: "+msg,false);
+  }
+}
 function genId(p){return(p||"D")+Date.now().toString(36)+Math.random().toString(36).slice(2,5)}
 function todayStr(){return new Date().toISOString().split("T")[0]}
 function fmtDate(d){if(!d)return"-";return d}
@@ -1150,7 +1221,7 @@ function renderDashboard(){
   });
 
   $("#dashCharts").innerHTML=`
-    <div class="chart-card" style="grid-column:1/-1"><h3>2026年销售趋势（1.1 - 12.30）</h3>${svgMultiLineChart(months,series,680,260)}</div>
+    <div class="chart-card" style="grid-column:1/-1"><h3>2026年销售趋势（1.1 - 12.30）</h3>${svgMultiLineChart(months,series,680,160)}</div>
   `;
 
   // Company table
