@@ -430,6 +430,8 @@ function loadData(k,def){
   return (v===undefined||v===null)?(def!==undefined?def:[]):v;
 }
 function saveData(k,d){
+  /* 给缺失时间戳的记录打上 _u（更新时间），用于多设备同步的记录级合并 */
+  if(Array.isArray(d)){const now=Date.now();d.forEach(r=>{if(r&&typeof r==="object"&&r._u===undefined)r._u=now;});}
   const rk=ns(k);DB_CACHE[rk]=d;
   if(_idb){_writeChain=_writeChain.then(()=>_idbPut(rk,d)).catch(()=>{});}
   updateStorageUsageDebounced();scheduleCloudPush();
@@ -461,7 +463,7 @@ function updateStorageUsageDebounced(){if(_usageTimer)clearTimeout(_usageTimer);
 /* ====== 云同步（Supabase，加密存储，零外部依赖） ====== */
 const CLOUD_KEY="wb_erp_cloudsync";
 const SUPABASE_URL="https://gramwlpsslkglreqnuek.supabase.co";
-const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdyYW13bHBzc2xrZ2xyZXFudWVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2NTg1MDYsImV4cCI6MjEwMTIzNDUwNn0.cmxoxJePim7JZmbH4oBqaT4BcH-2nc3WsQXVo9wGRYY";
+const SUPABASE_ANON_KEY="";/* anon key 不再硬编码进代码，改由用户在云同步设置中填写、仅存本机（见 saveCloudCfg） */
 function getCloudCfg(){try{let c=JSON.parse(localStorage.getItem(CLOUD_KEY)||"null");if(!c)c={};if(!c.url)c.url=SUPABASE_URL;if(!c.anonKey)c.anonKey=SUPABASE_ANON_KEY;/* 自动迁移：旧项目 ref gramwlpss1kglreqnuek 已失效，统一替换为新 ref gramwlpsslkglreqnuek */
   if(c.url&&c.url.indexOf("gramwlpss1kglreqnuek")>=0){c.url=c.url.replace("gramwlpss1kglreqnuek","gramwlpsslkglreqnuek");try{localStorage.setItem(CLOUD_KEY,JSON.stringify(c));}catch(e){}}
   return c;}catch(e){return {url:SUPABASE_URL,anonKey:SUPABASE_ANON_KEY};}}
@@ -469,10 +471,9 @@ function setCloudCfg(c){localStorage.setItem(CLOUD_KEY,JSON.stringify(c));}
 function updateCloudStatus(txt,ok){const el=$("#cloudStatus");if(el){el.textContent=txt;el.style.color=ok?"#4ade80":(txt==="同步失败"?"#f87171":"#facc15");}}
 let _cloudTimer=null;
 function scheduleCloudPush(){
-  const cfg=getCloudCfg();
-  if(!cfg||!cfg.enabled)return;
-  if(_cloudTimer)clearTimeout(_cloudTimer);
-  _cloudTimer=setTimeout(()=>{ pushToCloud().then(()=>updateCloudStatus("已同步",true)).catch(e=>{console.warn("云同步推送失败",e);updateCloudStatus("同步失败");}); },2500);
+  /* 安全止血：关闭「保存后自动推送」，避免在数据未确认正确时自动覆盖云端快照。
+     同步改为手动：仅在用户点击「立即上传到云端」时推送。 */
+  return;
 }
 function _b64FromBuf(buf){let s="";const b=new Uint8Array(buf);for(let i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s);}
 function _bufFromB64(b64){const s=atob(b64);const b=new Uint8Array(s.length);for(let i=0;i<s.length;i++)b[i]=s.charCodeAt(i);return b;}
@@ -514,30 +515,34 @@ function hasRealData(){
   return false;
 }
 async function ensureTableExists(cfg){
-  /* 尝试通过 /rest/v1/rpc 执行 SQL 创建表（需在 Supabase SQL Editor 中预先创建 exec_sql 函数） */
-  /* 如果表已存在则直接返回 true；若无法确认也返回 true 让后续 push/pull 报真实错误 */
+  /* 仅检查 erp_data 表是否存在且有访问权限；不存在时返回 false，由云同步弹窗中的建表 SQL 引导手动创建 */
   try{
     const checkUrl=cfg.url.replace(/\/$/,"")+"/rest/v1/erp_data?limit=0&select=id";
     const cr=await fetch(checkUrl,{headers:{"apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey}});
-    if(cr.ok)return true; /* 表存在且有权限 */
-    /* 如果返回 404 或 42P01 (relation does not exist)，说明表不存在 */
-    if(cr.status===404 || (await cr.text()).includes("does not exist")){
-      console.warn("[云同步] erp_data 表不存在，尝试创建...");
-      /* 尝试用 rpc 调用创建表 */
-      const rpcUrl=cfg.url.replace(/\/$/,"")+"/rest/v1/rpc/exec_sql";
-      const sql=`CREATE TABLE IF NOT EXISTS erp_data (
-        id TEXT PRIMARY KEY,
-        payload JSONB NOT NULL DEFAULT '{}',
-        updated_at TIMESTAMPTZ DEFAULT now()
-      );
-      ALTER TABLE erp_data ENABLE ROW LEVEL SECURITY;
-      CREATE POLICY "Allow anon full access" ON erp_data FOR ALL USING (true) WITH CHECK (true);`;
-      const rr=await fetch(rpcUrl,{method:"POST",headers:{"Content-Type":"application/json","apikey":cfg.anonKey,"Authorization":"Bearer "+cfg.anonKey},body:JSON.stringify({sql_string:sql})});
-      if(rr.ok){showToast("云端数据表已自动创建","success");return true;}
-      console.warn("[云同步] 自动建表失败",await rr.text());
-    }
+    if(cr.ok)return true;
+    console.warn("[云同步] erp_data 表不存在或无权限（HTTP "+cr.status+"），请按弹窗中的建表 SQL 在 Supabase SQL Editor 手动创建");
   }catch(e){console.warn("[云同步] 检查表是否存在时异常",e);}
   return false;
+}
+
+/* ====== 多设备同步：记录级合并（替代整表覆盖，避免互相丢数据） ====== */
+function recKey(r){
+  if(r===null||r===undefined)return null;
+  if(typeof r!=="object")return String(r);
+  /* 优先用业务主键「单据编号」去重（送货/退货单跨设备/跨导入 id 可能不同，单据编号才是稳定键） */
+  if(r["单据编号"])return "no:"+r["单据编号"];
+  if(r.id)return "id:"+r.id;
+  if(r["员工姓名"]!==undefined&&r["考勤日期"]!==undefined)return "att:"+r["员工姓名"]+"|"+r["考勤日期"];
+  if(r["员工姓名"]!==undefined&&r["月份"]!==undefined)return "sal:"+r["员工姓名"]+"|"+r["月份"];
+  if(r["商品名称"]!==undefined&&r["规格"]!==undefined)return "prod:"+r["商品名称"]+"|"+r["规格"];
+  if(r["归属公司"]!==undefined&&r["对账周期"]!==undefined)return "set:"+r["归属公司"]+"|"+r["对账周期"];
+  return "c:"+JSON.stringify(r);
+}
+function mergeCollections(localArr,cloudArr){
+  const map=new Map();
+  (localArr||[]).forEach(r=>{const k=recKey(r);if(k===null)return;const prev=map.get(k);if(!prev||(r._u||0)>(prev._u||0))map.set(k,r);});
+  (cloudArr||[]).forEach(r=>{const k=recKey(r);if(k===null)return;const prev=map.get(k);if(!prev)map.set(k,r);else if((r._u||0)>(prev._u||0))map.set(k,r);});
+  return Array.from(map.values());
 }
 
 async function pushToCloud(){
@@ -568,39 +573,37 @@ async function pullFromCloud(){
   if(!rows||!rows.length)return;
   const obj=await cryptoDecrypt(rows[0].payload,cfg.passphrase);
   if(obj&&obj.data){
-    const cloudTs=obj.ts||0;
-    const localChangedAt=Number(getFlag("wb_erp_local_changed_at")||0);
     /* 若云端标记仅有示例数据，绝不覆盖本地（防止早期示例数据覆盖用户真实数据） */
     const cloudHasReal=obj.hasReal===true;
     if(!cloudHasReal){
-      console.log("[云同步] 云端仅有示例数据，跳过覆盖（保留本地真实数据）");
+      console.log("[云同步] 云端仅有示例数据，跳过合并（保留本地真实数据）");
       showToast("云端只有示例数据，未覆盖本地","info");
       return;
     }
-    /* 仅当云端数据比本地更新时才覆盖，防止空云端覆盖本地数据 */
-    if(cloudTs>localChangedAt){
-      Object.entries(KEYS).forEach(([k,v])=>{
-        const rk=ns(v);
-        if(obj.data[k]!==undefined){
-          DB_CACHE[rk]=obj.data[k];
-          if(_idb){_writeChain=_writeChain.then(()=>_idbPut(rk,obj.data[k])).catch(()=>{});}
-        }
-      });
-      setFlag("wb_erp_lastpush",cloudTs);
-      setFlag("wb_erp_local_changed_at",cloudTs);
-      showToast("已从云端恢复较新数据","success");
-    }else{
-      console.log("[云同步] 云端数据不新于本地（cloud="+cloudTs+" local="+localChangedAt+"），跳过覆盖");
-    }
+    /* 记录级合并：按稳定键 union，_u 较新者胜出，避免多设备整表覆盖互相丢数据 */
+    Object.entries(KEYS).forEach(([k,v])=>{
+      const rk=ns(v);
+      const localArr=DB_CACHE[rk]!==undefined?DB_CACHE[rk]:loadData(v);
+      if(obj.data[k]===undefined)return;
+      let merged;
+      if(Array.isArray(localArr)&&Array.isArray(obj.data[k])){
+        merged=mergeCollections(localArr,obj.data[k]);
+      }else{
+        merged=obj.data[k];
+      }
+      DB_CACHE[rk]=merged;
+      if(_idb){_writeChain=_writeChain.then(()=>_idbPut(rk,merged)).catch(()=>{});}
+    });
+    setFlag("wb_erp_lastpush",Date.now());
+    setFlag("wb_erp_local_changed_at",Date.now());
+    showToast("已合并云端数据","success");
   }
 }
 async function initCloudSync(){
+  /* 安全止血：启动时不再自动拉取/推送，避免云端旧快照自动覆盖本地新数据（此前数据丢失的根因）。
+     同步改为手动：用户点「从云端拉取」或「立即上传到云端」时才同步。 */
   const cfg=getCloudCfg();
-  if(!cfg||!cfg.enabled)return;
-  /* 先拉取判断云端是否有更新；再用本地最新状态推送，避免空云端覆盖本地 */
-  try{ await pullFromCloud(); }catch(e){ console.warn("init pull 失败",e); updateCloudStatus("拉取失败: "+(e.message||e),false); }
-  try{ await pushToCloud(); }catch(e){ console.warn("init push 失败",e); updateCloudStatus("同步失败: "+(e.message||e),false); return; }
-  updateCloudStatus("已同步",true);
+  if(cfg&&cfg.enabled){ updateCloudStatus("手动同步",false); }
 }
 
 /* 网络诊断：逐步检测云同步链路每一步是否通畅 */
@@ -698,7 +701,7 @@ function openCloudSync(){
       <p style="font-size:12px;color:#94a3b8;margin:0 0 12px">数据用你的口令加密后存到 Supabase 私有库，多设备输入同一口令即自动同步。配置仅存本机，不上传。</p>
       <div class="form-grid">
         <div class="form-group" style="grid-column:1/3"><label>Supabase 项目 URL（已预置）</label><input type="text" id="cs_url" value="${escapeHtml(SUPABASE_URL)}" readonly style="background:#f1f5f9;color:#64748b"></div>
-        ${SUPABASE_ANON_KEY?``:`<div class="form-group" style="grid-column:1/3"><label>anon public key（首次需填，仅存本机）</label><input type="text" id="cs_key" value="${escapeHtml(cfg.anonKey||"")}" placeholder="eyJhbGci..."></div>`}
+        <div class="form-group" style="grid-column:1/3"><label>anon public key（仅存本机，去 Supabase → Settings → API 获取）</label><input type="text" id="cs_key" value="${escapeHtml(cfg.anonKey||"")}" placeholder="eyJhbGci..."></div>
         <div class="form-group" style="grid-column:1/3"><label>同步口令（自定义，多设备须一致）</label><input type="password" id="cs_pass" value="${escapeHtml(cfg.passphrase||"")}" placeholder="设一个只有你知道的密码"></div>
         <div class="form-group" style="grid-column:1/3;display:flex;align-items:center;gap:8px">
           <input type="checkbox" id="cs_en" ${cfg.enabled?"checked":""}><label style="margin:0">启用云同步</label>
@@ -734,7 +737,7 @@ CREATE POLICY "Allow anon full access" ON erp_data FOR ALL USING (true) WITH CHE
   `);
 }
 function saveCloudCfg(){
-  const keyInput=SUPABASE_ANON_KEY?SUPABASE_ANON_KEY:($("#cs_key")?$("#cs_key").value.trim():"");
+  const keyInput=$("#cs_key")?$("#cs_key").value.trim():"";
   const cfg={url:SUPABASE_URL,anonKey:keyInput,passphrase:$("#cs_pass").value,enabled:$("#cs_en").checked};
   if(cfg.enabled&&(!cfg.anonKey||!cfg.passphrase)){showToast("启用需填 anon key 与同步口令","error");return;}
   setCloudCfg(cfg);
@@ -763,9 +766,11 @@ async function manualPull(){
     const cfg=getCloudCfg();
     if(!cfg||!cfg.passphrase){showToast("请先填写同步口令","error");return;}
     if(!currentUser){showToast("请先登录","error");return;}
+    /* 拉取前先自动导出本地备份，防止合并出错导致数据丢失 */
+    try{ exportAllBackup(); }catch(e){ console.warn("拉取前备份失败",e); }
     await pullFromCloud();
     updateCloudStatus("已同步",true);
-    showToast("已从云端拉取","success");
+    showToast("已从云端拉取（拉取前已自动备份本地数据）","success");
     renderView(currentView);
   }catch(e){
     console.warn(e);
@@ -782,7 +787,7 @@ function fmtNum(n){n=Number(n)||0;return n.toFixed(2)}
 function fmtQty(n){n=Number(n)||0;return Number.isInteger(n)?n:n.toFixed(2)}
 function shortCompany(c){return (c||"").replace("水发智慧服务有限公司","").replace("（总部）","")||"总部"}
 function showToast(msg,type){const t=$("#toast");t.textContent=msg;t.className="toast show "+(type||"");setTimeout(()=>t.className="toast "+(type||""),2500)}
-function escapeHtml(s){if(s===null||s===undefined)return"";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
+function escapeHtml(s){if(s===null||s===undefined)return"";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;").replace(/`/g,"&#96;")}
 function getFiltered(data,companyField){
   const c=$("#companyFilter").value;
   if(c==="all")return data;
@@ -883,15 +888,19 @@ function parseCSV(text){
 }
 function toCSV(rows){
   return rows.map(r=>r.map(c=>{
-    const s=String(c===null||c===undefined?"":c);
+    let s=String(c===null||c===undefined?"":c);
+    /* 防 CSV 公式注入：以 = + - @ 或制表符/回车开头的单元格加单引号前缀，Excel 打开时按文本处理 */
+    if(/^[=+\-@\t\r]/.test(s))s="'"+s;
     return s.includes(",")||s.includes('"')||s.includes("\n")?'"'+s.replace(/"/g,'""')+'"':s;
   }).join(",")).join("\r\n");
 }
 function downloadFile(filename,content,mime){
+  /* 清洗文件名中的路径/非法字符，防止路径注入 */
+  const safeName=String(filename||"download").replace(/[\\/:*?"<>|\u0000-\u001f]/g,"_");
   const blob=new Blob(["\ufeff"+content],{type:mime||"text/csv;charset=utf-8"});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
-  a.href=url;a.download=filename;
+  a.href=url;a.download=safeName;
   document.body.appendChild(a);a.click();
   document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url),100);
@@ -1083,13 +1092,22 @@ function importAllBackup(event){
   const reader=new FileReader();
   reader.onload=e=>{
     try{
-      const data=JSON.parse(e.target.result);
+      let text=e.target.result;
+      if(text.charCodeAt(0)===0xFEFF)text=text.slice(1); /* 去除 BOM，避免 JSON.parse 报错 */
+      const data=JSON.parse(text);
       Object.entries(KEYS).forEach(([k,v])=>{
-        if(data[k])saveData(v,data[k]);
+        if(data[k]===undefined)return;
+        const local=loadData(v);
+        if(Array.isArray(local)&&Array.isArray(data[k])){
+          /* 合并（只补缺失、不覆盖本地），避免恢复旧备份时覆盖较新的本地数据 */
+          saveData(v,mergeCollections(local,data[k]));
+        }else{
+          saveData(v,data[k]);
+        }
       });
-      showToast("数据恢复成功","success");
+      showToast("数据恢复成功（已合并，未覆盖本地已有数据）","success");
       renderView(currentView);
-    }catch(err){showToast("文件格式错误","error")}
+    }catch(err){showToast("文件格式错误："+(err.message||err),"error")}
   };
   reader.readAsText(file,"UTF-8");
   event.target.value="";
